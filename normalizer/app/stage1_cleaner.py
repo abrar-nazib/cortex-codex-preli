@@ -132,7 +132,7 @@ async def run(complaint: str) -> Stage1Output:
             original_length=original_length,
         )
         return out
-    except (LLMError, ValidationError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:                                # noqa: BLE001
         log.warning("stage1 fallback: %s", exc)
         return Stage1Output(
             cleaned_complaint=truncated[: config.MAX_CLEANED_LENGTH],

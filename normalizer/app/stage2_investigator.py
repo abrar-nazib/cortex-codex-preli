@@ -273,7 +273,7 @@ async def run(stage1: Stage1Output, transactions: List[TransactionHistoryEntry])
             status_contradiction=sc_flag,
             flags=flags,
         )
-    except (LLMError, ValidationError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:                                # noqa: BLE001
         log.warning("stage2 fallback: %s", exc)
         return Stage2Output(
             relevant_transaction_id=None,

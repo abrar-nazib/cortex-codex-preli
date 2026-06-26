@@ -488,3 +488,64 @@ response = client.chat.completions.create(
     max_tokens=<stage-appropriate>,
     timeout=10
 )
+
+## Audit + browser-test readiness (locked settings v5, 2026-06-26)
+
+Pre-flight audit of all normalizer files for the user's "dockerize and make
+browser-test worthy at https://hackathonapi.cortextechnologies.net/docs/"
+objective. Findings and resolutions:
+
+### Browser-test wiring (verified, no change required)
+- Backend `tickets/views.py` POST `/analyze-ticket` proxies to
+  `NORMALIZER_URL = http://normalizer:9000` (verified in
+  `backend/cortex/settings.py` line 64 and `backend/.env.example` line 16).
+- Backend mounts Swagger at `/docs/` (drf_spectacular, controlled by
+  `DJANGO_ENABLE_DOCS=true` in compose).
+- Normalizer FastAPI app auto-mounts `/docs`, `/redoc`, `/openapi.json`
+  on import — confirmed via smoke import (`python -c "import app.main"`).
+- Compose service `normalizer` declared with no host-port mapping;
+  reachable only on the internal network at `http://normalizer:9000`.
+- All routes mounted: `GET /health`, `POST /analyze-ticket`,
+  `GET /docs`, `GET /redoc`, `GET /openapi.json`.
+
+### Audit findings + resolutions (committed to local feature branch)
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | `pytest.ini` missing — tests could not import `app` package | Added `normalizer/pytest.ini` with `testpaths=tests`, `pythonpath=.` |
+| 2 | Stage 4 `_pre_sanitize` only replaced the first matching phrase per call → sentences with both "card number" AND "CVV" (or "guaranteed" AND "your money will be returned") lost one but kept the other | Rewrote `_pre_sanitize` to loop on credential phrases AND loop on promise phrases until no more matches |
+| 3 | Stage 4 stripped bare `"your pin"`/`"your otp"` even when preceded by negation ("do not share your PIN") → mangled legitimate safety boilerplate | Added 40-char negation window check (`"do not "`, `"never "`, etc.) before replacing credential phrases |
+| 4 | Stage 4 did not override `case_type` to phishing if Stage 3 returned "other" — relied entirely on Stage 3's short-circuit | Added Stage 4 defensive short-circuit: scans `stage1.possible_issues`, `stage1.claimed_case_type`, `stage1.cleaned_complaint`, `stage3.agent_summary`, `stage3.recommended_next_action` for `PHISHING_KEYWORDS` and forces `case_type=phishing_or_social_engineering` |
+| 5 | Stage exception handlers were narrow `(LLMError, ValidationError, ValueError, KeyError, TypeError)` → unexpected `RuntimeError` from LLM SDK leaked through to caller | Broadened all three stage internal `except` to `except Exception` (noqa: BLE001). Pipeline.py wrapper was already broad. Net effect: every stage is total — never raises |
+| 6 | `_run` helper in `tests/test_safety.py` had dead `if False else` branch | Removed dead branch |
+| 7 | `tests/test_investigator.py` passed a list-of-dict to `TransactionHistoryEntry.model_validate` instead of a dict | Fixed to pass the inner dict |
+
+### Test results
+- Before audit: 40 pass / 5 fail
+- After audit fixes: **46 pass / 0 fail** (`pytest -q tests/`)
+
+### Behavior without a valid OpenRouter API key
+- All four stages fall back to deterministic paths.
+- Stage 4 still applies code enforcement (phrase scan, replacements, override precedence, enum coercion, language drift fix).
+- `human_review_required` defaults to `True` (conservative).
+- Endpoint still returns 200 with a valid `TicketResponse`.
+- For browser testing without a real API key, every response will show `human_review=true`, `confidence < 0.5`, and `reason_codes` containing one of `["rules_fallback", "llm_error", "pipeline_error_*"]`.
+
+### Files changed in this audit (not yet committed)
+- `app/stage1_cleaner.py` — broadened exception handler
+- `app/stage2_investigator.py` — broadened exception handler
+- `app/stage3_reasoner.py` — broadened exception handler
+- `app/stage4_safety.py` — `_pre_sanitize` loop + negation check + phishing short-circuit + `overrides` init fix
+- `tests/test_safety.py` — dead-code removal
+- `tests/test_investigator.py` — list-vs-dict fix
+- `pytest.ini` (new) — testpaths + pythonpath
+- `CLAUDE.md` — this v5 entry
+
+### Outstanding items (informational only — none block browser testing)
+- The `normalizer/.env` file currently has a real-looking API key committed to disk but gitignored. The compose env_file is `./normalizer/.env`, so this key is what the running container uses. If you rotate the key, edit `./normalizer/.env` only.
+- The template files at `normalizer/main.py`, `normalizer/config.py`, `normalizer/__init__.py`, and `normalizer/llm/` are superseded by `normalizer/app/` but left on disk for now (deleting teammate-owned files is outside this scope).
+- `tests/tests.http` still targets `http://localhost:8001/analyze-ticket` per the previous prompt. For browser testing via the public URL, this file is not used — the Swagger UI at `https://hackathonapi.cortextechnologies.net/docs/` provides a click-driven form.
+
+### Git state
+- All audit fixes are on local `feature/normalizer-v1` branch as **uncommitted changes**.
+- Per the user's explicit directive: **NO push to `origin`.** Teammate will merge.
+- The earlier commit `972011a` (initial implementation) remains on `feature/normalizer-v1` as the base.

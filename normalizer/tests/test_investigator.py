@@ -176,14 +176,14 @@ def test_run_llm_error_returns_insufficient_data(monkeypatch):
         was_truncated=False,
         original_length=30,
     )
-    tx = [{
+    tx = {
         "transaction_id": "TXN-1",
         "timestamp": "2026-04-14T14:08:22Z",
         "type": "transfer",
         "amount": 5000.0,
         "counterparty": "+8801719876543",
         "status": "completed",
-    }]
+    }
     from app.schema import TransactionHistoryEntry
     txs = [TransactionHistoryEntry.model_validate(tx)]
     out = asyncio.run(run(stage1, txs))

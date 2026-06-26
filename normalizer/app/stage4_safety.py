@@ -85,24 +85,58 @@ def _pre_sanitize(text: str) -> tuple[str, list[str], list[str]]:
     """Strip credential requests, unauthorized promises, and third-party redirects.
 
     Returns (cleaned_text, violations_found, overrides_applied).
+
+    Iterates until no more matches, so a single sentence containing both
+    "card number" and "CVV" (or "guaranteed" and "your money will be returned")
+    has every violation stripped, not just the first one found.
+
+    The credential scan skips bare "your pin"/"your otp" when preceded by
+    a negation like "do not share" / "never share" / "do not provide" — these
+    are legitimate safety boilerplate, not requests.
     """
     violations: list[str] = []
     overrides: list[str] = []
     out = text
 
-    # Credential requests
-    hit = _scan_phrase(out, config.CREDENTIAL_REQUEST_PHRASES)
-    if hit:
-        out = _replace_phrase(out, hit, config.SAFETY_REPLACEMENT_CREDENTIAL)
-        violations.append(f"credential_request:{hit}")
-        overrides.append("replaced_credential_request")
+    # Credential requests — loop until clean.
+    # Skip phrases that are part of a safety warning like "do not share your PIN".
+    # The negation word ("do not", "never") precedes the matched credential
+    # phrase; we look at the 40 chars BEFORE the match start.
+    safe_negations = ("do not ", "never ", "please do not ", "do not ever ")
 
-    # Unauthorized promises
-    hit = _scan_phrase(out, config.UNAUTHORIZED_PROMISE_PHRASES)
-    if hit:
-        out = _replace_phrase(out, hit, config.SAFETY_REPLACEMENT_PROMISE)
-        violations.append(f"unauthorized_promise:{hit}")
-        overrides.append("replaced_unauthorized_promise")
+    def _is_negated(text_lower: str, idx: int) -> bool:
+        # idx is the start index of the matched phrase in the lowercased text.
+        window_start = max(0, idx - 40)
+        window = text_lower[window_start:idx]
+        return any(neg in window for neg in safe_negations)
+
+    changed = True
+    while changed:
+        changed = False
+        for phrase in config.CREDENTIAL_REQUEST_PHRASES:
+            pat = re.compile(re.escape(phrase), re.IGNORECASE)
+            m = pat.search(out)
+            if not m:
+                continue
+            if _is_negated(out.lower(), m.start()):
+                # Legitimate safety boilerplate, not a request. Leave it.
+                continue
+            out = pat.sub(config.SAFETY_REPLACEMENT_CREDENTIAL, out)
+            violations.append(f"credential_request:{phrase}")
+            overrides.append("replaced_credential_request")
+            changed = True
+            break  # restart scan
+
+    # Unauthorized promises — loop until clean.
+    changed = True
+    while changed:
+        changed = False
+        hit = _scan_phrase(out, config.UNAUTHORIZED_PROMISE_PHRASES)
+        if hit:
+            out = _replace_phrase(out, hit, config.SAFETY_REPLACEMENT_PROMISE)
+            violations.append(f"unauthorized_promise:{hit}")
+            overrides.append("replaced_unauthorized_promise")
+            changed = True
 
     # Third-party phone / URLs
     tp = _scan_third_party(out)
@@ -190,6 +224,26 @@ async def run(request: TicketRequest, stage1: Stage1Output,
     case_type = stage3.case_type
     language = stage1.detected_language or "en"
     tx_id = stage3.relevant_transaction_id
+    overrides: list[str] = []   # collected across all enforcement steps
+
+    # ─── Stage 4 phishing short-circuit (defensive) ──────────────────────
+    # If Stage 3 missed phishing but Stage 1 detected phishing-shaped
+    # content (cleaned_complaint / possible_issues / claimed_case_type),
+    # override case_type to phishing_or_social_engineering. The floor
+    # below will then set severity=critical, department=fraud_risk,
+    # human_review=True.
+    _phishing_signals = [
+        (stage1.cleaned_complaint or "").lower(),
+        " ".join(stage1.possible_issues or []).lower(),
+        (stage1.claimed_case_type or "").lower(),
+        (stage3.agent_summary or "").lower(),
+        (stage3.recommended_next_action or "").lower(),
+    ]
+    _phishing_blob = " | ".join(s for s in _phishing_signals if s)
+    if any(kw in _phishing_blob for kw in config.PHISHING_KEYWORDS):
+        if case_type != "phishing_or_social_engineering":
+            case_type = "phishing_or_social_engineering"
+            overrides.append("stage4_phishing_short_circuit")
 
     # ─── Part A: pre-sanitize customer_reply AND recommended_next_action ──
     pre_reply, v1, o1 = _pre_sanitize(stage3.customer_reply)

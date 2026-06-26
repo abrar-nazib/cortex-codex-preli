@@ -27,7 +27,7 @@ from app.stage4_safety import _pre_sanitize, _force_human_review, run
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.run(coro)
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------

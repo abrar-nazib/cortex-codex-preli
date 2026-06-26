@@ -285,7 +285,7 @@ async def run(
             confidence=confidence,
             reason_codes=[str(c) for c in (raw.get("reason_codes") or [])][:20],
         )
-    except (LLMError, ValidationError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:                                # noqa: BLE001
         log.warning("stage3 fallback: %s", exc)
         return _fallback(request, stage1, stage2, transactions)
 
