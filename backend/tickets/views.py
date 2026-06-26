@@ -13,19 +13,26 @@ Error handling for POST /analyze-ticket follows the Problem Statement §4.1:
        logged server-side only. Stack traces, tokens, and secrets never reach
        the response (§4.1 + rubric "Secret handling").
 
-The 200 (successful analysis) path is intentionally NOT implemented in this
-scaffold — the deterministic + LLM reasoning pipeline lands next. A valid
-request currently returns 501 so the 400/422/500 contract can be tested in
-isolation without a fake 200 leaking through.
+The 200 path forwards the validated request to the normalizer service
+(``settings.NORMALIZER_URL``) and proxies the response back. Any upstream
+HTTP error or non-200 becomes a sanitized 500 here.
 """
 from __future__ import annotations
 
 import logging
 
+import httpx
+from django.conf import settings
 from drf_spectacular.utils import OpenApiExample, extend_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from tenacity import (
+    Retrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from .serializers import (
     AnalyzeTicketOutSerializer,
@@ -185,18 +192,80 @@ class AnalyzeTicketView(APIView):
             )
 
     def _analyze(self, validated_data: dict) -> Response:
-        """Build the §6 response for a validated ticket.
+        """Forward the validated ticket to the normalizer service.
 
-        Not implemented yet — returns 501 so the error contract is testable
-        without a fake 200. The real evidence-match → classify → route →
-        draft-safe-reply pipeline replaces this body; raise from here and the
-        post() wrapper turns it into a sanitized 500.
+        Behavior:
+          - Builds ``POST {NORMALIZER_URL}/analyze-ticket`` from settings.
+          - Times out per ``settings.NORMALIZER_TIMEOUT_S`` (default 20s).
+          - Retries ``NORMALIZER_MAX_RETRIES`` times on transient network
+            errors with exponential backoff ``NORMALIZER_RETRY_BACKOFF_S``.
+          - On non-200 from the normalizer, raises so the post() wrapper
+            returns the sanitized 500 contract.
+          - On success, returns the normalizer's JSON body as-is (200).
         """
+        ticket_id = validated_data.get("ticket_id")
+        url = settings.NORMALIZER_URL.rstrip("/") + "/analyze-ticket"
+
+        max_attempts = max(1, getattr(settings, "NORMALIZER_MAX_RETRIES", 2) + 1)
+        backoff = max(0.0, getattr(settings, "NORMALIZER_RETRY_BACKOFF_S", 0.5))
+        timeout_s = float(getattr(settings, "NORMALIZER_TIMEOUT_S", 20.0))
+
+        retrying = Retrying(
+            stop=stop_after_attempt(max_attempts),
+            wait=wait_exponential(multiplier=backoff, min=backoff, max=2.0),
+            retry=retry_if_exception_type(
+                (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+            ),
+            reraise=True,
+        )
+
         log.info(
-            "POST /analyze-ticket accepted ticket_id=%s",
-            validated_data.get("ticket_id"),
+            "POST /analyze-ticket → normalizer ticket_id=%s url=%s",
+            ticket_id,
+            url,
         )
-        return Response(
-            {"detail": "Analysis pipeline not implemented."},
-            status=status.HTTP_501_NOT_IMPLEMENTED,
+
+        try:
+            for attempt in retrying:
+                with attempt:
+                    resp = httpx.post(
+                        url,
+                        json=validated_data,
+                        timeout=timeout_s,
+                    )
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            # Re-raise as a generic exception so the post() wrapper turns it
+            # into the sanitized 500 (no upstream details in the response).
+            log.error(
+                "normalizer unreachable ticket_id=%s exc=%s",
+                ticket_id,
+                type(exc).__name__,
+            )
+            raise RuntimeError("normalizer_unreachable") from exc
+
+        if resp.status_code != 200:
+            log.error(
+                "normalizer non-200 ticket_id=%s status=%d body_len=%d",
+                ticket_id,
+                resp.status_code,
+                len(resp.content or b""),
+            )
+            raise RuntimeError(f"normalizer_non_200:{resp.status_code}")
+
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            log.error(
+                "normalizer returned non-JSON ticket_id=%s exc=%s",
+                ticket_id,
+                type(exc).__name__,
+            )
+            raise RuntimeError("normalizer_bad_json") from exc
+
+        log.info(
+            "POST /analyze-ticket ok ticket_id=%s case_type=%s verdict=%s",
+            ticket_id,
+            payload.get("case_type"),
+            payload.get("evidence_verdict"),
         )
+        return Response(payload, status=status.HTTP_200_OK)
