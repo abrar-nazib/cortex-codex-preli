@@ -1,4 +1,4 @@
-"""Views: GET /health, POST /summarize (legacy), POST /analyze-ticket.
+"""Views: GET /health, POST /analyze-ticket.
 
 Error handling for POST /analyze-ticket follows the Problem Statement §4.1:
 
@@ -8,13 +8,14 @@ Error handling for POST /analyze-ticket follows the Problem Statement §4.1:
   422  Schema-valid JSON but semantically/type invalid — wrong data type,
        value too long, null where a non-null value is required, empty
        complaint, enum value outside the §7 taxonomy, etc.
-  500  Internal error (not exercised yet — the analysis pipeline is not
-       wired in). Reserved for when the normalizer/reasoning path can fail
-       in ways the caller should not see details of.
+  500  Internal error. The body is a non-sensitive JSON message
+       (``{"detail": "Internal server error."}``) — the real exception is
+       logged server-side only. Stack traces, tokens, and secrets never reach
+       the response (§4.1 + rubric "Secret handling").
 
 The 200 (successful analysis) path is intentionally NOT implemented in this
 scaffold — the deterministic + LLM reasoning pipeline lands next. A valid
-request currently returns 501 so the 400/422 contract can be tested in
+request currently returns 501 so the 400/422/500 contract can be tested in
 isolation without a fake 200 leaking through.
 """
 from __future__ import annotations
@@ -29,11 +30,8 @@ from rest_framework.views import APIView
 from .serializers import (
     AnalyzeTicketOutSerializer,
     HealthOutSerializer,
-    SummarizeInSerializer,
-    SummarizeOutSerializer,
     TicketWithTransactionSerializer,
 )
-from .summarize_client import SummarizerError, call_summarize
 
 log = logging.getLogger("backend")
 
@@ -84,42 +82,10 @@ class HealthView(APIView):
         return Response({"status": "ok"}, status=status.HTTP_200_OK)
 
 
-class SummarizeView(APIView):
-    """Summarize one piece of text via the normalizer. Public, no auth."""
-
-    @extend_schema(
-        request=SummarizeInSerializer,
-        responses=SummarizeOutSerializer,
-        examples=[
-            OpenApiExample(
-                "Summarize",
-                value={"text": "Paste any text here to get a concise summary."},
-                request_only=True,
-            ),
-        ],
-    )
-    def post(self, request):
-        serializer = SummarizeInSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        text = serializer.validated_data["text"]
-
-        log.info("POST /summarize len=%d", len(text))
-        try:
-            summary = call_summarize(text)
-        except SummarizerError as exc:
-            log.warning("summarize FAILED: %s", exc)
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY
-            )
-
-        log.info("summarize OK summary_len=%d", len(summary))
-        return Response({"summary": summary}, status=status.HTTP_200_OK)
-
-
 class AnalyzeTicketView(APIView):
     """POST /analyze-ticket — investigate one complaint + its transactions.
 
-    Only the 400/422 contract is wired here (§4.1). The 200 analysis path
+    Only the 400/422/500 contract is wired here (§4.1). The 200 analysis path
     (evidence-match -> classify -> route -> draft safe reply) is the next
     milestone; until then a valid request returns 501 so the error contract
     can be verified without a fake 200 slipping through.
@@ -136,6 +102,10 @@ class AnalyzeTicketView(APIView):
             422: OpenApiExample(
                 "Schema-valid but invalid (422)",
                 value={"complaint": ["This field may not be null."]},
+            ),
+            500: OpenApiExample(
+                "Internal error (500)",
+                value={"detail": "Internal server error."},
             ),
         },
         examples=[
@@ -191,8 +161,41 @@ class AnalyzeTicketView(APIView):
             log.info("POST /analyze-ticket rejected: %d %s", status_code, serializer.errors)
             return Response(body, status=status_code)
 
-        # Phase 3 (200): analysis pipeline — not implemented yet.
-        log.info("POST /analyze-ticket accepted ticket_id=%s", serializer.validated_data["ticket_id"])
+        # Phase 3 (200): run the analysis pipeline. Any unexpected exception
+        # becomes a sanitized 500 (§4.1) — the real error is logged server-side,
+        # never echoed to the caller. `_analyze` is the single hook the 200 path
+        # grows into, which also makes the 500 contract testable in isolation.
+        try:
+            return self._analyze(serializer.validated_data)
+        except Exception as exc:  # noqa: BLE001 — catch-all is the point
+            # Sanitized logging only: the exception message may carry a secret
+            # (e.g. an upstream error echoing an auth header), so we never log
+            # str(exc) or a traceback (rubric "Secret handling": no stack
+            # traces/tokens/secrets in logs OR responses). The class name is
+            # enough for ops triage without leaking payload.
+            ticket_id = serializer.validated_data.get("ticket_id")
+            log.error(
+                "POST /analyze-ticket internal error ticket_id=%s exc=%s",
+                ticket_id,
+                type(exc).__name__,
+            )
+            return Response(
+                {"detail": "Internal server error."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def _analyze(self, validated_data: dict) -> Response:
+        """Build the §6 response for a validated ticket.
+
+        Not implemented yet — returns 501 so the error contract is testable
+        without a fake 200. The real evidence-match → classify → route →
+        draft-safe-reply pipeline replaces this body; raise from here and the
+        post() wrapper turns it into a sanitized 500.
+        """
+        log.info(
+            "POST /analyze-ticket accepted ticket_id=%s",
+            validated_data.get("ticket_id"),
+        )
         return Response(
             {"detail": "Analysis pipeline not implemented."},
             status=status.HTTP_501_NOT_IMPLEMENTED,

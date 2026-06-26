@@ -15,13 +15,16 @@ explains the case and drafts a safe reply.
 
 **Build status:**
 - `/analyze-ticket` endpoint exists with the full §5 request + §6 response
-  serializers, §7 enum validation, and the 400/422 error contract wired (27
-  tests green). The **200 analysis path is not implemented yet** — a valid
+  serializers, §7 enum validation, and the 400/422/500 error contract wired
+  (28 tests green). The **200 analysis path is not implemented yet** — a valid
   request returns **501** so the error contract can be tested in isolation.
   Next milestone: the evidence-match → classify → route → draft-safe-reply
   pipeline + safety filter.
-- `/summarize` is a legacy placeholder kept for the normalizer round-trip
-  contract; don't delete it without migrating its tests.
+- The old `/summarize` placeholder API + its client/tests have been removed
+  from both backend and normalizer. The normalizer currently exposes only
+  `/health`; its reasoning endpoint lands with the backend 200 path. The
+  generic LLM-provider layer (`normalizer/llm/`, `config.py`) is kept — it is
+  not summarize-specific and the `/analyze` reasoning call will reuse it.
 - `README.md` / `backend/README.md` still describe an older `/sort-ticket`
   triage shape (`pipeline.py`, `safety.py`, `normalizer_client.py`) — those
   names are stale targets, not existing files. The Problem Statement below is
@@ -197,18 +200,14 @@ nginx (HTTPS) → backend (Django+DRF, gunicorn :8000) → normalizer (FastAPI, 
   (extends TicketSerializer with nested `transaction_history` list — the
   `POST /analyze-ticket` body) · `AnalyzeTicketOutSerializer` (full §6
   response, `relevant_transaction_id` string|null, optional `confidence`
-  0–1 / `reason_codes`) · legacy `HealthOut`/`SummarizeIn`/`SummarizeOut`.
-- `views.py` — `HealthView` (GET `/health`), `SummarizeView` (legacy
-  `/summarize`), `AnalyzeTicketView` (`POST /analyze-ticket`).
-- `summarize_client.py` — httpx + tenacity client for the normalizer
-  `/summarize` round trip (legacy; reused as the model for the future
-  reasoning-call client).
+  0–1 / `reason_codes`) · `HealthOutSerializer`.
+- `views.py` — `HealthView` (GET `/health`), `AnalyzeTicketView`
+  (`POST /analyze-ticket`).
 - `exceptions.py` — `custom_exception_handler` (see contracts below).
 - `middleware.py` — `RequestResponseLogMiddleware` logs every request (`>>`)
   / response (`<<`) with clipped bodies — full cycle in
   `docker compose logs -f backend`.
-- `tests/` — `test_health`, `test_summarize` (legacy, normalizer mocked),
-  `test_analyze_ticket` (400/422 contract).
+- `tests/` — `test_health`, `test_analyze_ticket` (400/422/500 contract).
 
 ### `POST /analyze-ticket` request flow (current)
 1. `AnalyzeTicketView.post` reads `request.data` in a try/except — a malformed
@@ -223,30 +222,28 @@ nginx (HTTPS) → backend (Django+DRF, gunicorn :8000) → normalizer (FastAPI, 
    collects `.code`s: if **every** code is `required` → **400** (missing
    required field, including nested); anything else (`invalid`, `null`,
    `blank`, `max_length`, `invalid_choice`, `not_a_list`) → **422**.
-4. Valid payload → **501** "Analysis pipeline not implemented." (200 path TBD).
+4. Valid payload → `self._analyze(validated_data)` wrapped in a catch-all
+   try/except. `_analyze` currently returns **501** "Analysis pipeline not
+   implemented." Any unexpected exception → sanitized **500**
+   `{"detail": "Internal server error."}` with a **sanitized log line**
+   (`ticket_id` + `type(exc).__name__` only — never `str(exc)` or a traceback,
+   per rubric "Secret handling": no stack traces/tokens/secrets in logs OR
+   responses). `_analyze` is the single hook the 200 path grows into and the
+   seam tests use to force a 500.
 5. `RequestResponseLogMiddleware` logs the full in/out cycle.
 
-### Legacy `/summarize` flow (still used by normalizer round-trip tests)
-`SummarizeView` → `call_summarize` → `POST {NORMALIZER_URL}/summarize`
-(httpx + tenacity, retry 5xx/network/timeout, **no retry on 4xx**) →
-normalizer `summarizer.summarize` → `llm.get_provider()` →
-`OpenRouterProvider.complete` (OpenAI-compatible chat completions,
-`temperature=0.2`). `SummarizerError` → 502; validation failure → 422 (via the
-global handler, see below).
-
 ### Key contracts to preserve
-- **400 vs 422 split differs by endpoint** (read this carefully before touching
-  `exceptions.py` or `views.py`):
-  - `/analyze-ticket` classifies in-view (`_classify_validation_errors`):
-    malformed JSON / non-object / missing-required → **400**; type/size/null/
-    empty/enum → **422**. It never reaches the global handler.
-  - `/summarize` still relies on the **global** `custom_exception_handler`
-    (`tickets/exceptions.py`) which rewrites DRF's default 400 → 422. Its tests
-    (`test_summarize_missing_text_rejected` expects 422) depend on this. Do NOT
-    change the global handler without migrating `/summarize` tests.
-  - Don't "fix" either path to a single status indiscriminately — the
-    statement (§4.1) wants 400 for malformed/missing and 422 (encouraged) for
-    schema-valid-but-bad, and `/analyze-ticket` implements exactly that.
+- **400 vs 422 split** (read this carefully before touching `exceptions.py` or
+  `views.py`): `/analyze-ticket` classifies in-view
+  (`_classify_validation_errors`): malformed JSON / non-object /
+  missing-required → **400**; type/size/null/empty/enum → **422**. It never
+  reaches the global handler. The global `custom_exception_handler`
+  (`tickets/exceptions.py`) still rewrites DRF's default 400 → 422 — it is now
+  unused by any shipped endpoint but remains as the safety net for any future
+  endpoint that wants the §4.1 "422 encouraged" semantics; don't delete it
+  blindly, and don't "fix" `/analyze-ticket` to a single status — the statement
+  (§4.1) wants 400 for malformed/missing and 422 for schema-valid-but-bad, which
+  `/analyze-ticket` implements exactly.
 - **Docs gated** — `drf_spectacular` swagger at `/docs/`, OpenAPI at
   `/api/schema/`, both 404 when `DJANGO_ENABLE_DOCS=false` (set in
   `docker-compose.prod.yml`). Mounted conditionally in `cortex/urls.py`.
@@ -298,7 +295,7 @@ Django built-in test runner (no pytest). Normalizer is mocked with
 normalizer or a live LLM.
 
 ```bash
-# all backend tests (against compose postgres test DB; 27 tests currently)
+# all backend tests (against compose postgres test DB; 32 tests currently)
 docker compose exec backend python manage.py test
 # single module
 docker compose exec backend python manage.py test tickets.tests.test_analyze_ticket
@@ -307,12 +304,14 @@ docker compose exec backend python manage.py test tickets.tests.test_analyze_tic
 ```
 
 The compose service is named **`backend`** (not `web`). `/analyze-ticket`
-tests are network-free (no 200 path → no normalizer call); `/summarize` tests
-mock `tickets.views.call_summarize` with `unittest.mock.patch`.
+tests are network-free (no 200 path → no normalizer call). The 500 tests
+patch `tickets.views.AnalyzeTicketView._analyze` to raise a RuntimeError
+carrying a fake secret + traceback and assert neither leaks into the response
+or the log stream.
 
 There is no normalizer test suite currently (`normalizer/tests/` is empty);
 the LLM call is the only thing to stub if you add one — mock
-`normalizer.summarizer.get_provider` or `OpenRouterProvider.complete`.
+`normalizer.llm.get_provider` or `OpenRouterProvider.complete`.
 
 ## Deploy
 
@@ -350,21 +349,23 @@ models, and migration are done. What's left to ship the real `/analyze-ticket`:
    already exists in `.env.example`/compose — wire it (loud 500 vs. sanitized
    `human_review_required=true` fallback). Safety is a hard requirement
    (−15/−10/−10, disqualification at 2+ critical violations).
-5. **Normalizer**: replace generic `/summarize` with the real
-   classification/reasoning contract (new endpoint, e.g. `/analyze`, mirroring
-   the `summarize_client.py` retry pattern). Keep the OpenRouter provider +
-   pluggable `get_provider()`; constrain prompts to emit the §7 enums and JSON
-   shape; parse untrusted. Hybrid: deterministic rules for evidence-match +
-   safety, LLM for language understanding + drafting. Keep total round trip
-   ≤ 30 s (budget the OpenRouter call well under `OPENROUTER_TIMEOUT_S=30`).
+5. **Normalizer**: add the real classification/reasoning contract (new
+   endpoint, e.g. `/analyze`, built on the existing `llm/` provider layer +
+   `config.py`). Keep the OpenRouter provider + pluggable `get_provider()`;
+   constrain prompts to emit the §7 enums and JSON shape; parse untrusted. Add
+   an httpx + tenacity client in the backend for the normalizer round trip
+   (5xx/network/timeout retry, no 4xx retry, treat output as untrusted). Hybrid: deterministic rules for
+   evidence-match + safety, LLM for language understanding + drafting. Keep
+   total round trip ≤ 30 s (budget the OpenRouter call well under
+   `OPENROUTER_TIMEOUT_S=30`).
 6. **Replace the 501** in `AnalyzeTicketView.post` with the real 200 path that
    builds + validates the response through `AnalyzeTicketOutSerializer` and
    echoes `ticket_id`. Add a `test_analyze_ticket` 200-case using the public
    sample cases in `docs/SUST_Preli_Sample_Cases.json` (10 worked cases —
    reference only, NOT the hidden test set).
-7. Keep intact: the in-view 400/422 classification, untrusted-normalizer
-   parsing, loopback-only blast surface, `/health` shape, no-secret logging,
-   the global handler's 400→422 rewrite for `/summarize`.
+7. Keep intact: the in-view 400/422 classification and the catch-all sanitized
+   500 (no stack traces/secrets in response OR logs), untrusted-normalizer
+   parsing, loopback-only blast surface, `/health` shape, no-secret logging.
 
 Reference docs in `docs/`: Problem Statement (contract above), Team
 Instructions Manual (workflow/deploy/secrets checklist), Evaluation Rubric

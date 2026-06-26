@@ -60,7 +60,7 @@ DATABASES = {
     "default": env.db("DATABASE_URL", default="postgres://cortex:cortex_pw@db:5432/cortex"),
 }
 
-# ─── Normalizer config (read by tickets.summarize_client) ────────────────────
+# ─── Normalizer config (read by the future tickets normalizer client) ────────
 NORMALIZER_URL = env("NORMALIZER_URL", default="http://normalizer:9000")
 NORMALIZER_TIMEOUT_S = env.float("NORMALIZER_TIMEOUT_S", default=20.0)
 NORMALIZER_MAX_RETRIES = env.int("NORMALIZER_MAX_RETRIES", default=2)

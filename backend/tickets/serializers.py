@@ -68,18 +68,6 @@ class HealthOutSerializer(serializers.Serializer):
     status = serializers.CharField()
 
 
-class SummarizeInSerializer(serializers.Serializer):
-    """Inbound text to summarize (legacy /summarize placeholder)."""
-
-    text = serializers.CharField(min_length=1, trim_whitespace=True)
-
-
-class SummarizeOutSerializer(serializers.Serializer):
-    """Summary returned to the caller (legacy /summarize placeholder)."""
-
-    summary = serializers.CharField()
-
-
 class TransactionSerializer(serializers.Serializer):
     """One transaction_history entry (§5.2). Standalone — no ticket context."""
 

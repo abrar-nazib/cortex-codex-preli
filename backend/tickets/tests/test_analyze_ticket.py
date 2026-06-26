@@ -11,8 +11,12 @@ down the error contract only:
 The normalizer is never reached (no 200 path), so these are network-free and
 run against the compose postgres test DB.
 """
+from unittest.mock import patch
+
 from rest_framework import status
 from rest_framework.test import APITestCase
+
+from tickets.views import AnalyzeTicketView
 
 ENDPOINT = "/analyze-ticket"
 
@@ -225,3 +229,92 @@ class AnalyzeTicket422Tests(APITestCase):
         r = self._post(VALID_PAYLOAD)
         self.assertNotIn(r.status_code, (status.HTTP_400_BAD_REQUEST,
                                          status.HTTP_422_UNPROCESSABLE_ENTITY))
+
+
+class AnalyzeTicket500Tests(APITestCase):
+    """§4.1 500 — an internal error must return a non-sensitive JSON message.
+
+    The Problem Statement §4.1 + the rubric "Secret handling" require: the 500
+    body includes a non-sensitive error message and must NOT expose stack
+    traces, tokens, or secrets. The view wraps the analysis step and returns a
+    sanitized ``{"detail": "Internal server error."}``, logging the real
+    exception server-side only.
+
+    We force an internal error by patching ``AnalyzeTicketView._analyze`` to
+    raise a RuntimeError whose message deliberately contains a fake API key
+    and a fake traceback — then assert none of that leaks into the response.
+    """
+
+    FAKE_SECRET = "sk-live-OPENROUTER_API_KEY-1234567890abcdef"
+    FAKE_TRACEBACK = (
+        'Traceback (most recent call last):\n'
+        '  File "/app/tickets/pipeline.py", line 42, in _analyze\n'
+        '    raise RuntimeError("boom")\n'
+        'RuntimeError: connection reset'
+    )
+
+    def _force_internal_error(self):
+        msg = f"boom: {self.FAKE_SECRET}\n{self.FAKE_TRACEBACK}"
+        return patch.object(
+            AnalyzeTicketView, "_analyze", side_effect=RuntimeError(msg)
+        )
+
+    def test_internal_error_returns_500_json(self):
+        with self._force_internal_error():
+            r = self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
+        self.assertEqual(r.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertIn("application/json", r["content-type"])
+        body = r.json()
+        self.assertIn("detail", body)
+        # Generic, non-sensitive message (not the exception text).
+        self.assertNotIn("boom", body["detail"])
+
+    def test_internal_error_body_has_no_secret(self):
+        with self._force_internal_error():
+            r = self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
+        text = r.content.decode("utf-8", errors="replace")
+        # The planted secret must not appear verbatim.
+        self.assertNotIn(self.FAKE_SECRET, text)
+        # And none of these sensitive token markers.
+        for marker in ("api_key", "API_KEY", "sk-live", "Bearer ", "password"):
+            self.assertNotIn(marker, text)
+
+    def test_internal_error_body_has_no_traceback(self):
+        with self._force_internal_error():
+            r = self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
+        text = r.content.decode("utf-8", errors="replace")
+        for marker in (
+            "Traceback",
+            "most recent call last",
+            "/app/",
+            '.py", line',
+            "ErrorDetail",
+            "RuntimeError",
+        ):
+            self.assertNotIn(marker, text)
+
+    def test_internal_error_still_reachable_after_one_failure(self):
+        # A 500 must not crash the process — the next request still works.
+        with self._force_internal_error():
+            self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
+        r = self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
+        # Back to the normal not-implemented 501 (no leaked 500, no crash).
+        self.assertEqual(r.status_code, status.HTTP_501_NOT_IMPLEMENTED)
+
+    def test_internal_error_log_has_no_secret_or_traceback(self):
+        # Rubric "Secret handling": no stack traces / tokens / secrets in logs
+        # either, not just responses. The view logs only a sanitized line
+        # (ticket_id + exception class name) — assert the planted secret and
+        # traceback never reach the log stream.
+        with self.assertLogs("backend", level="ERROR") as captured:
+            with self._force_internal_error():
+                self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
+
+        logged = "\n".join(captured.output)
+        self.assertNotIn(self.FAKE_SECRET, logged)
+        for marker in ("api_key", "API_KEY", "sk-live", "Traceback",
+                        "most recent call last", "RuntimeError: boom"):
+            self.assertNotIn(marker, logged)
+        # But the sanitized error line is present (proves it was logged).
+        self.assertIn("internal error", logged)
+        self.assertIn("exc=RuntimeError", logged)

@@ -1,12 +1,15 @@
-"""FastAPI app — endpoints only.
+"""FastAPI app — the normalizer service endpoints.
 
-  GET  /health     -> {"status":"ok"}
-  POST /summarize  -> {"text": "..."} -> {"summary": "..."}
+  GET  /health   -> {"status":"ok"}
 
-All LLM plumbing lives elsewhere:
+The reasoning/classification contract for POST /analyze-ticket (the
+investigator pipeline: evidence-match -> classify -> route -> draft safe reply)
+wires in here once the backend's 200 path lands. Until then this is the
+health probe only.
+
+All LLM plumbing that the future reasoning endpoint will use lives in:
   config.py     env settings
   llm/          provider interface + OpenRouter impl
-  summarizer.py orchestration (prompt + provider dispatch)
 
 Run from the project root (parent of this package):
     uvicorn normalizer.main:app --reload --port 9000
@@ -15,12 +18,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict
+from fastapi import FastAPI
 
 from .config import SETTINGS
-from .llm import LLMError
-from .summarizer import summarize
 
 logging.basicConfig(
     level=SETTINGS.log_level,
@@ -28,39 +28,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("normalizer.api")
 
-app = FastAPI(title="Cortex Normalizer", version="0.2.0")
-
-
-class SummarizeRequest(BaseModel):
-    """Request envelope. `text` is required; extras are ignored."""
-
-    model_config = ConfigDict(extra="allow")
-
-    text: str
-
-
-class SummarizeResponse(BaseModel):
-    summary: str
+app = FastAPI(title="Cortex Normalizer", version="0.3.0")
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
-
-
-@app.post("/summarize", response_model=SummarizeResponse)
-def summarize_endpoint(req: SummarizeRequest) -> SummarizeResponse:
-    text = req.text.strip()
-    if not text:
-        log.warning("summarize rejected: empty text")
-        raise HTTPException(status_code=422, detail="text must not be empty")
-
-    log.info("POST /summarize len=%d", len(text))
-    try:
-        summary = summarize(text)
-    except LLMError as exc:
-        log.warning("summarize FAILED: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc))
-
-    log.info("summarize OK len=%d", len(summary))
-    return SummarizeResponse(summary=summary)

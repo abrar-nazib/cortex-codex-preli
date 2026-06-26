@@ -43,4 +43,4 @@ class OpenRouterProvider(LLMProvider):
         try:
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError(f"openrouter returned no summary: {data}") from exc
+            raise LLMError(f"openrouter returned no message content: {data}") from exc
