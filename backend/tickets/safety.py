@@ -9,52 +9,77 @@ the normalizer to rephrase, re-scans, and on a second failure either fails loud
 Detection is deliberately conservative on the credential axis: a sentence that
 tells the customer NOT to share a PIN/OTP is safe (negated). Only affirmative
 requests to share/enter/send a credential are violations.
+
+Multilingual: customer_reply may be in English, Bangla (Bengali script), or
+Banglish. The credential/refund/third-party patterns carry Latin AND Bangla
+tokens, and the sentence splitter recognizes the Bengali danda (। / ॥). The
+prompt also instructs the model to keep PIN/OTP/password/card number as Latin
+terms in any language so they are always recognizable here.
 """
 from __future__ import annotations
 
 import re
 
-# credential nouns that must never be requested
+# credential nouns that must never be requested. Latin terms first; the prompt
+# instructs the model to keep PIN/OTP/password/card number as Latin in any
+# language, but we also catch common Bangla transliterations (পিন/ওটিপি/...).
 _CREDENTIAL_RE = re.compile(
     r"\b(pin|otp|o\.t\.p|password|passcode|cvv|cvc|full\s+card|card\s+number|"
-    r"16[-\s]?digit)\b",
+    r"16[-\s]?digit|"
+    r"পিন|ওটিপি|পাসওয়ার্ড|পাসকোড|কার্ড\s*নম্বর|কার্ড\s*নাম্বার|সিভিভি|সিভিসি)\b",
     re.IGNORECASE,
 )
-# verbs that, combined with a credential in the same sentence, make a request
+# verbs that, combined with a credential in the same sentence, make a request.
+# Latin + Bangla request verbs (দিন/পাঠান/বলুন/জানান/লিখুন/শেয়ার করুন).
 _REQUEST_VERB_RE = re.compile(
-    r"\b(share|provide|send|enter|confirm|give|type|tell|enter|message)\b",
+    r"\b(share|provide|send|enter|confirm|give|type|tell|message|"
+    r"দিন|দেও|পাঠান|পাঠাবেন|বলুন|জানান|লিখুন|শেয়ার\s*করুন|শেয়ার\s*করো|জানাবেন)\b",
     re.IGNORECASE,
 )
+# negation that turns a credential mention into a safe "do not share" reminder.
+# Latin + Bangla (না / করবেন না / দয়ে করে / নয়).
 _NEGATION_RE = re.compile(
-    r"\b(not|never|don(?:'|)t|do\s+not|without|no\s+one|anyone|avoid|refuse)\b",
+    r"\b(not|never|don(?:'|)t|do\s+not|without|no\s+one|anyone|avoid|refuse|"
+    r"না|করবেন\s+না|করবেননা|দয়ে\s*করে|দয়ে\s*করে|নয়|নই)\b",
     re.IGNORECASE,
 )
 
-# refund/reversal/unblock promises without authority
+# refund/reversal/unblock promises without authority. Latin + Bangla
+# (ফেরত দেব / রিফান্ড করে দেব / আনব্লক / ফেরত পাবেন).
 _REFUND_RE = re.compile(
     r"\b("
     r"we\s+(?:will|can|shall|'ll|are\s+going\s+to)\s+(?:refund|reverse|unblock|"
     r"return\s+your\s+money|send\s+(?:back|you))|"
     r"refund\s+you|will\s+be\s+refunded|unblock\s+your\s+account|"
-    r"your\s+(?:money|funds)\s+will\s+be\s+(?:refund|return|sent\s+back)"
+    r"your\s+(?:money|funds)\s+will\s+be\s+(?:refund|return|sent\s+back)|"
+    r"ফেরত\s+দেব|ফেরত\s+দেও|রিফান্ড\s+করে?\s*দেব|রিফান্ড\s+পাবেন|"
+    r"আনব্লক\s+করে?\s*দেব|টাকা\s+ফেরত\s+দেব|ফেরত\s+পাবেন"
     r")\b",
     re.IGNORECASE,
 )
-# safe-hedge words that turn a refund mention into an authorized, conditional one
+# safe-hedge words that turn a refund mention into an authorized, conditional one.
+# Latin + Bangla (অফিশিয়াল চ্যানেল / যোগ্য / নীতি / পারে / হতে পারে).
 _REFUND_SAFE_RE = re.compile(
     r"\b(eligible|official\s+channel|if\s+(?:you\s+are\s+)?eligible|may|might|"
-    r"where\s+applicable|policy)\b",
+    r"where\s+applicable|policy|"
+    r"অফিশিয়াল\s*চ্যানেল|অফিসিয়াল\s*চ্যানেল|যোগ্য|নীতি|হতে\s*পারে|পেতে\s*পারে|পারে)\b",
     re.IGNORECASE,
 )
 
-# instructing the customer to contact a third party / unknown number
+# instructing the customer to contact a third party / unknown number.
+# Latin + Bangla (যোগাযোগ করুন / কল করুন / তাকে কথা বলুন).
 _THIRD_PARTY_RE = re.compile(
     r"\b(contact|call|reach|message|whatsapp|sms)\s+"
-    r"(?:him|her|them|that\s+(?:person|number|agent)|the\s+(?:number|person|agent|caller))\b",
+    r"(?:him|her|them|that\s+(?:person|number|agent)|the\s+(?:number|person|agent|caller))\b|"
+    r"(?:তাকে|তার\s+সাথে|ওই\s+নম্বরে|সেই\s+নম্বরে)\s+(?:কল\s*করুন|যোগাযোগ\s*করুন|কথা\s*বলুন)|"
+    r"(?:কল\s*করুন|যোগাযোগ\s*করুন)\s+(?:তাকে|তার\s+সাথে|ওই\s+নম্বরে|সেই\s+নম্বরে)",
     re.IGNORECASE,
 )
 
-_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# Sentence splitter. Splits on latin [.!?] + whitespace (keeps decimals like
+# 3.14 intact) and on the Bengali danda । / ॥ with optional following space
+# (Bangla sentences often have no space after ।).
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|(?<=[।॥])\s*")
 
 
 def _sentences(text: str) -> list[str]:

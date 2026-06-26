@@ -121,9 +121,10 @@ def _apply_evidence_overrides(signals: list[str], case_type: str, rel_id: str | 
     return rel_id, verdict
 
 
-def _sanitize_texts(result: dict, validated_data: dict) -> dict:
+def _sanitize_texts(result: dict, validated_data: dict, language: str = "en") -> dict:
     """Run the safety rail on customer_reply + recommended_next_action; rephrase
-    on violation and re-scan. Mutates `result` in place, returns it."""
+    on violation and re-scan. Mutates `result` in place, returns it. `language`
+    is the customer's actual (detected) language so the rephrase stays in it."""
     customer_text = result.get("customer_reply", "")
     action_text = result.get("recommended_next_action", "")
     texts = {"customer_reply": customer_text, "recommended_next_action": action_text}
@@ -136,7 +137,6 @@ def _sanitize_texts(result: dict, validated_data: dict) -> dict:
 
     log.warning("pipeline safety violation ticket=%s violations=%d",
                 validated_data.get("ticket_id"), len(all_violations))
-    language = validated_data.get("language") or "en"
     rephrased = normalizer_client.rephrase(
         texts, all_violations, language=language,
         user_type=validated_data.get("user_type"),
@@ -237,7 +237,14 @@ def build_response(validated_data: dict) -> Response:
     }
 
     # ── stage 4 safety rail ──────────────────────────────────────────────────
-    out = _sanitize_texts(out, validated_data)
+    # Use the normalizer's detected language (falls back to the declared hint)
+    # so any rephrase stays in the customer's actual language. Coerce: the
+    # normalizer is untrusted, so only accept a known language code.
+    detected = raw.get("language_detected")
+    sanitize_lang = detected if detected in {"en", "bn", "mixed"} else (
+        validated_data.get("language") or "en"
+    )
+    out = _sanitize_texts(out, validated_data, language=sanitize_lang)
     if out.pop("_force_review", False):
         out["human_review_required"] = True
 

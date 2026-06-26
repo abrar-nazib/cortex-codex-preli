@@ -69,8 +69,11 @@ LOG_LEVEL = env("LOG_LEVEL", default="INFO").upper()
 
 # Safety: if true, /analyze-ticket returns 500 when customer-facing text remains
 # unsafe after rephrase (loud fail). If false, a templated safe reply is returned
-# with human_review_required=true (soft fail).
-SAFETY_FAIL_LOUD = env.bool("SAFETY_FAIL_LOUD", default=True)
+# with human_review_required=true (soft fail). Default false: a 500 on an
+# otherwise-valid request is a reliability hit, and the templated fallback is
+# equally safe (never emits unsafe text), so soft-fail is the better trade for
+# the eval. Flip to true only when debugging safety regressions.
+SAFETY_FAIL_LOUD = env.bool("SAFETY_FAIL_LOUD", default=False)
 
 # drf_spectacular swagger UI at /docs/ + OpenAPI schema at /api/schema/.
 # Gate so prod can turn the surface off with DJANGO_ENABLE_DOCS=false

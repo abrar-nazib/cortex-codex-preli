@@ -119,6 +119,9 @@ class AnalyzeResult(BaseModel):
     # deterministic overrides. The backend strips these before emitting §6.
     signals: list[str] = Field(default_factory=list)
     top_transaction_id: Optional[str] = None
+    # Internal-only: the stage-1 detected complaint language, so the backend's
+    # safety rephrase uses the customer's actual language, not the declared hint.
+    language_detected: Optional[Language] = None
 
 
 class RephraseRequest(BaseModel):

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -138,12 +138,18 @@ class RoutingTests(TestCase):
             evidence_verdict="consistent", amount=12000.0,
             relevant_transaction_id="TXN-1"))
 
-    def test_high_value_wrong_transfer_no_match_triggers_review(self):
-        # high-value + no matched txn: money at risk + can't confirm -> review
-        # (overrides the clarify path a small-value no-match would take).
-        self.assertTrue(human_review_required(
+    def test_high_value_wrong_transfer_no_match_does_not_trigger(self):
+        # No matched txn -> the pipeline passes amount=None to the routing rule
+        # (build_response uses _matched_amount, which returns None when rel_id
+        # is null). The high-value trigger keys off CONFIRMED money movement
+        # (the matched txn's amount), not the customer's CLAIMED amount. A
+        # wrong-transfer-no-match at any claimed amount is a clarify path (ask
+        # for the txn id), not an escalation — the customer may be wrong about
+        # the amount (e.g. claims 10000 but only 5000 was sent). Escalating on
+        # the claimed amount would over-review customer errors. See sample 8.
+        self.assertFalse(human_review_required(
             case_type="wrong_transfer", severity="medium",
-            evidence_verdict="insufficient_data", amount=12000.0,
+            evidence_verdict="insufficient_data", amount=None,
             relevant_transaction_id=None))
 
     def test_high_value_merchant_settlement_does_not_trigger(self):
@@ -210,6 +216,33 @@ class SafetyRailTests(TestCase):
         self.assertFalse(is_safe("Please call that number to resolve it."))
         self.assertFalse(is_safe("Contact him directly for the refund."))
 
+    # ── Bangla (Bengali script) replies — rail is multilingual ──────────────
+    def test_bn_safe_otp_reminder_passes(self):
+        # "দয়ে করে আপনার OTP শেয়ার করবেন না" = "please do not share your OTP".
+        # Must NOT be a false positive: negation (না) is recognized.
+        self.assertTrue(is_safe("দয়ে করে আপনার OTP শেয়ার করবেন না।"))
+
+    def test_bn_blocks_credential_request(self):
+        # "অনুগ্রহ করে আপনার OTP দিন" = "please give your OTP" — must be caught
+        # (Bangla request verb দিন + Latin OTP).
+        self.assertFalse(is_safe("অনুগ্রহ করে আপনার OTP দিন।"))
+        self.assertFalse(is_safe("আপনার পিন বলুন।"))  # "tell your PIN"
+
+    def test_bn_blocks_refund_promise(self):
+        # "আমরা আপনাকে ৫০০০ টাকা ফেরত দেব" = "we will refund you 5000 taka".
+        self.assertFalse(is_safe("আমরা আপনাকে ৫০০০ টাকা ফেরত দেব।"))
+
+    def test_bn_allows_official_channel_hedge(self):
+        # Conditional refund via official channels is allowed.
+        self.assertTrue(is_safe(
+            "যোগ্য হলে অফিশিয়াল চ্যানেলে ফেরত পাবেন। দয়ে করে OTP শেয়ার করবেন না।"))
+
+    def test_bn_sentence_split_on_danda(self):
+        # The Bengali danda । must split sentences so negation in one sentence
+        # doesn't leak across to another. Here sentence 1 requests OTP, sentence
+        # 2 says do not — the OTP REQUEST in sentence 1 is still a violation.
+        self.assertFalse(is_safe("আপনার OTP দিন। OTP শেয়ার করবেন না।"))
+
 
 # ─── build_response orchestration (mocked normalizer) ───────────────────────
 class BuildResponseTests(APITestCase):
@@ -268,6 +301,7 @@ class BuildResponseTests(APITestCase):
         self.assertTrue(is_safe(b["customer_reply"]))
         self.assertTrue(is_safe(b["recommended_next_action"]))
 
+    @override_settings(SAFETY_FAIL_LOUD=True)
     def test_safety_fail_loud_returns_500_when_still_unsafe(self):
         unsafe = _result(customer_reply="Please share your OTP now.",
                           recommended_next_action="Get the PIN.")
@@ -279,6 +313,25 @@ class BuildResponseTests(APITestCase):
         r = self._post(unsafe, rephrase_result=bad_rephrase)
         self.assertEqual(r.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         self.assertNotIn("OTP", r.content.decode())
+
+    def test_safety_soft_fail_returns_safe_template_when_still_unsafe(self):
+        # Default (SAFETY_FAIL_LOUD=false): still-unsafe after rephrase -> 200
+        # with the templated safe reply + human_review_required forced true.
+        # Never a 500 on an otherwise-valid request.
+        unsafe = _result(customer_reply="Please share your OTP now.",
+                          recommended_next_action="Get the PIN.")
+        bad_rephrase = {
+            "customer_reply": "Please share your OTP now.",
+            "recommended_next_action": "Get the PIN.",
+        }
+        r = self._post(unsafe, rephrase_result=bad_rephrase)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        b = r.json()
+        self.assertTrue(b["human_review_required"])
+        self.assertTrue(is_safe(b["customer_reply"]))
+        # the affirmative credential REQUEST must be gone (a "do not share your
+        # OTP" reminder is fine and expected in the safe template).
+        self.assertNotIn("share your OTP", b["customer_reply"].lower())
 
     def test_normalizer_unreachable_returns_200_fallback(self):
         with patch("tickets.normalizer_client.analyze",

@@ -82,9 +82,9 @@ def stage_evidence(req: AnalyzeRequest, clean_complaint: str) -> EvidencePass:
 
 
 def stage_classify(req: AnalyzeRequest, clean_complaint: str,
-                   evidence: EvidencePass) -> AnalyzeResult:
+                   evidence: EvidencePass, language_detected: str = "en") -> AnalyzeResult:
     provider = get_provider()
-    messages = build_classify_messages(req, clean_complaint, evidence)
+    messages = build_classify_messages(req, clean_complaint, evidence, language_detected)
     raw = _call_with_retry(provider, messages, classify_schema)
     # coerce: relevant_transaction_id must be a known id or null
     valid_ids = {t.transaction_id for t in req.transaction_history}
@@ -157,7 +157,7 @@ def run_analyze(req: AnalyzeRequest) -> AnalyzeResult:
     evidence = stage_evidence(req, clean)
 
     try:
-        result = stage_classify(req, clean, evidence)
+        result = stage_classify(req, clean, evidence, normalized.language_detected)
     except Exception as exc:  # noqa: BLE001
         log.error("stage=classify crashed ticket=%s err=%s", req.ticket_id, type(exc).__name__)
         result = _fallback_result(req, clean)
@@ -167,6 +167,10 @@ def run_analyze(req: AnalyzeRequest) -> AnalyzeResult:
     # -> inconsistent, duplicate -> later txn).
     result.signals = evidence.signals
     result.top_transaction_id = evidence.top_transaction_id
+    # pass the detected complaint language so the backend can rephrase in the
+    # same language if the safety rail trips (the declared req.language hint
+    # may be absent or wrong).
+    result.language_detected = normalized.language_detected
 
     log.info("pipeline done ticket=%s verdict=%s case=%s severity=%s",
              req.ticket_id, result.evidence_verdict, result.case_type, result.severity)

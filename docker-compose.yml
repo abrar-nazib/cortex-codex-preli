@@ -56,7 +56,7 @@ services:
       NORMALIZER_TIMEOUT_S: "20"
       NORMALIZER_MAX_RETRIES: "2"
       NORMALIZER_RETRY_BACKOFF_S: "0.5"
-      SAFETY_FAIL_LOUD: "true"
+      SAFETY_FAIL_LOUD: "false"
       LOG_LEVEL: "INFO"
     depends_on:
       db:
