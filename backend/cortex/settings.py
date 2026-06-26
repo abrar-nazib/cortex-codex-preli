@@ -67,6 +67,11 @@ NORMALIZER_MAX_RETRIES = env.int("NORMALIZER_MAX_RETRIES", default=2)
 NORMALIZER_RETRY_BACKOFF_S = env.float("NORMALIZER_RETRY_BACKOFF_S", default=0.5)
 LOG_LEVEL = env("LOG_LEVEL", default="INFO").upper()
 
+# Safety: if true, /analyze-ticket returns 500 when customer-facing text remains
+# unsafe after rephrase (loud fail). If false, a templated safe reply is returned
+# with human_review_required=true (soft fail).
+SAFETY_FAIL_LOUD = env.bool("SAFETY_FAIL_LOUD", default=True)
+
 # drf_spectacular swagger UI at /docs/ + OpenAPI schema at /api/schema/.
 # Gate so prod can turn the surface off with DJANGO_ENABLE_DOCS=false
 # (one-line flip in docker-compose.prod.yml). Defaults on for dev.

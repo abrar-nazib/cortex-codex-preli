@@ -27,6 +27,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .pipeline import build_response
 from .serializers import (
     AnalyzeTicketOutSerializer,
     HealthOutSerializer,
@@ -185,18 +186,16 @@ class AnalyzeTicketView(APIView):
             )
 
     def _analyze(self, validated_data: dict) -> Response:
-        """Build the §6 response for a validated ticket.
+        """Run the 200 analysis pipeline and return the §6 response.
 
-        Not implemented yet — returns 501 so the error contract is testable
-        without a fake 200. The real evidence-match → classify → route →
-        draft-safe-reply pipeline replaces this body; raise from here and the
-        post() wrapper turns it into a sanitized 500.
+        Delegates to tickets.pipeline.build_response, which calls the normalizer
+        (stages 1-3), re-validates enums, runs the deterministic safety rail +
+        rephrase, applies the department / human_review rules, and validates the
+        final body through AnalyzeTicketOutSerializer. A normalizer failure is
+        recoverable (conservative 200 fallback); a safety failure with
+        SAFETY_FAIL_LOUD=true raises SafetyError, which the post() wrapper turns
+        into a sanitized 500. Any other unexpected exception also becomes a 500.
         """
-        log.info(
-            "POST /analyze-ticket accepted ticket_id=%s",
-            validated_data.get("ticket_id"),
-        )
-        return Response(
-            {"detail": "Analysis pipeline not implemented."},
-            status=status.HTTP_501_NOT_IMPLEMENTED,
-        )
+        log.info("POST /analyze-ticket accepted ticket_id=%s",
+                 validated_data.get("ticket_id"))
+        return build_response(validated_data)
