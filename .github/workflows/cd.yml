@@ -1,22 +1,10 @@
-# Deploy to VPS on every push to main.
-#
-# Plain shell on a self-hosted runner's ssh-agent. No third-party action:
-# webfactory/ssh-agent still pins Node 20 and trips the deprecation warning.
-# Workflow does exactly what was asked:
-#   1. SSH to vps
-#   2. cd /home/ubuntu/cortex-codex-mock-preli
-#   3. git pull --ff-only (refuse non-FF to avoid the "two histories" mess)
-#   4. docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-#      (db + backend + normalizer; frontend removed. The prod overlay turns
-#      off debug + (eventually) the docs surface. Migrations run inside the
-#      backend container's CMD, so the deploy stays a one-liner.)
 
 name: CD to VPS
 
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 concurrency:
