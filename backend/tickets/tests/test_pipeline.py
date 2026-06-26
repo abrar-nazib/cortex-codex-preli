@@ -124,6 +124,58 @@ class RoutingTests(TestCase):
             evidence_verdict="insufficient_data", amount=1000.0,
             relevant_transaction_id=None))
 
+    # ── high-value trigger (§6.1 "high value cases", scoped to at-risk types) ─
+    def test_high_value_payment_failed_triggers_review(self):
+        # doc: high value -> review. No sample; doc-faithful extrapolation.
+        self.assertTrue(human_review_required(
+            case_type="payment_failed", severity="medium",
+            evidence_verdict="consistent", amount=12000.0,
+            relevant_transaction_id="TXN-1"))
+
+    def test_high_value_refund_request_triggers_review(self):
+        self.assertTrue(human_review_required(
+            case_type="refund_request", severity="medium",
+            evidence_verdict="consistent", amount=12000.0,
+            relevant_transaction_id="TXN-1"))
+
+    def test_high_value_wrong_transfer_no_match_triggers_review(self):
+        # high-value + no matched txn: money at risk + can't confirm -> review
+        # (overrides the clarify path a small-value no-match would take).
+        self.assertTrue(human_review_required(
+            case_type="wrong_transfer", severity="medium",
+            evidence_verdict="insufficient_data", amount=12000.0,
+            relevant_transaction_id=None))
+
+    def test_high_value_merchant_settlement_does_not_trigger(self):
+        # SAMPLE-09: 15000 BDT but routine -> NOT reviewed. merchant_settlement
+        # is excluded from the high-value at-risk scope.
+        self.assertFalse(human_review_required(
+            case_type="merchant_settlement_delay", severity="medium",
+            evidence_verdict="consistent", amount=15000.0,
+            relevant_transaction_id="TXN-1"))
+
+    def test_high_value_other_vague_does_not_trigger(self):
+        # "other"/vague excluded from high-value scope -> clarify, not review.
+        self.assertFalse(human_review_required(
+            case_type="other", severity="low",
+            evidence_verdict="insufficient_data", amount=12000.0,
+            relevant_transaction_id=None))
+
+    def test_below_threshold_payment_failed_no_review(self):
+        # 9999 < 10000 threshold, consistent -> routine auto-reversal, no review.
+        self.assertFalse(human_review_required(
+            case_type="payment_failed", severity="high",
+            evidence_verdict="consistent", amount=9999.0,
+            relevant_transaction_id="TXN-1"))
+
+    def test_contested_refund_via_inconsistent_triggers_review(self):
+        # §7.2 contested refund -> dispute_resolution -> review. Contested shows
+        # up as inconsistent evidence (merchant disputes the claim).
+        self.assertTrue(human_review_required(
+            case_type="refund_request", severity="low",
+            evidence_verdict="inconsistent", amount=500.0,
+            relevant_transaction_id="TXN-1"))
+
 
 # ─── safety rail (pure) ─────────────────────────────────────────────────────
 class SafetyRailTests(TestCase):
