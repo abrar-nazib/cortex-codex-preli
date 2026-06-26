@@ -13,9 +13,9 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy the package into /app/normalizer/ so `uvicorn normalizer.main:app` resolves correctly
+# Copy the package into /app/normalizer/ so `uvicorn normalizer.app.main:app` resolves correctly
 COPY . ./normalizer/
 
 EXPOSE 9000
 
-CMD ["uvicorn", "normalizer.main:app", "--host", "0.0.0.0", "--port", "9000"]
+CMD ["uvicorn", "normalizer.app.main:app", "--host", "0.0.0.0", "--port", "9000"]
