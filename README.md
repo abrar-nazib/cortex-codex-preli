@@ -3,6 +3,10 @@
 **Team CORTEX** — submission for the **bKash presents SUST CSE Carnival 2026:
 Codex Community Hackathon**, AI/API Challenge · 4-Hour Online Preliminary.
 
+- **Team Lead: Nazib Abrar**
+- **Team Member: Khondoker Sefayer Alam**
+- **Team Member: Md Shihabul Islam**
+
 - Repo: <https://github.com/abrar-nazib/cortex-codex-mock-preli>
 - Live API base URL: `https://hackathonapi.cortextechnologies.net`
 - Submission form: (see organizer Google Form)

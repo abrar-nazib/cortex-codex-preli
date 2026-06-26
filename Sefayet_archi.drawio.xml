@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net">
+  <diagram name="Methodology Overview" id="P1_tt_6jPUHxcrSFjIk8">
+    <mxGraphModel dx="1328" dy="935" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="115" pageHeight="190" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="65ae-xnnsJbkY8tIesYS-17" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=10" value="STAGE 3 · Reasoner  (LLM)&#xa;app/stage3_reasoner.py&#xa;&#xa;• case_type (8 enums)&#xa;• severity (4 tiers)&#xa;• department (6 enums)&#xa;• agent_summary&#xa;• recommended_next_action&#xa;• human_review_required&#xa;• confidence&#xa;• customer_reply (draft)" vertex="1">
+          <mxGeometry height="180" width="220" x="1009" y="340" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-36" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-2" style="endArrow=classic;html=1;rounded=0;strokeColor=#000000" target="65ae-xnnsJbkY8tIesYS-8" value="direct loopback&#xa;(dev: bypass nginx)">
+          <mxGeometry relative="1" x="0.0016" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-1" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1" value="Cortex Codex — QueueStorm Investigator Architecture&#xa;(Online Preliminary · SUST CSE Carnival 2026)" vertex="1">
+          <mxGeometry height="50" width="650" x="500" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="Judge / Browser&#xa;https://hackathonapi.cortextechnologies.net/docs/&#xa;&#xa;POST /analyze-ticket" vertex="1">
+          <mxGeometry height="80" width="240" x="80" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#82b366;verticalAlign=top;dashed=0" value="" vertex="1">
+          <mxGeometry height="320" width="280" x="60" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontStyle=1" value="POST /analyze-ticket&#xa;AnalyzeTicketView&#xa;→ httpx POST normalizer:9000/analyze-ticket&#xa;→ timeout 20s, 2 retries, exp backoff" vertex="1">
+          <mxGeometry height="80" width="240" x="80" y="495" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10" value="Error contract: 400 / 422 / 500 (sanitized)" vertex="1">
+          <mxGeometry height="30" width="240" x="80" y="585" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-10" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=2" value="env: NORMALIZER_URL=http://normalizer:9000" vertex="1">
+          <mxGeometry height="30" width="240" x="80" y="625" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-11" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9673a6;verticalAlign=top" value="" vertex="1">
+          <mxGeometry height="650" width="755" x="500" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-12" parent="1" style="text;html=1;strokeColor=none;fillColor=#e1d5e7;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=13;fontStyle=1" value="cortex-normalizer  (FastAPI + Pydantic v2 + OpenAI SDK)&#xa;0.0.0.0:9000  ·  internal-only on compose network" vertex="1">
+          <mxGeometry height="45" width="600" x="520" y="115" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10" value="FastAPI  app/main.py&#xa;POST /analyze-ticket&#xa;GET  /health" vertex="1">
+          <mxGeometry height="55" width="240" x="700" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10" value="Pipeline orchestrator  app/pipeline.py&#xa;run_pipeline(request) → TicketResponse&#xa;try/except each stage → deterministic fallback" vertex="1">
+          <mxGeometry height="60" width="240" x="700" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-15" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=10" value="STAGE 1 · Cleaner  (LLM)&#xa;app/stage1_cleaner.py&#xa;&#xa;• Translate bn → en&#xa;• Transliterate Banglish → en&#xa;• Extract entities&#xa;• Quarantine prompt injection&#xa;&#xa;→ Stage1Output&#xa;   cleaned_complaint&#xa;   detected_language&#xa;   possible_issues" vertex="1">
+          <mxGeometry height="160" width="220" x="528" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-16" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=10" value="STAGE 2 · Investigator  (LLM + code)&#xa;app/stage2_investigator.py&#xa;&#xa;Code signals (pre-LLM):&#xa;  amount_match (±2%)&#xa;  status_contradiction&#xa;  amount_in_text_vs_history&#xa;  time_hard_mismatch (≥7d)&#xa;Empty history → short-circuit&#xa;&#xa;LLM sees signals JSON, picks:&#xa;  relevant_transaction_id&#xa;  evidence_verdict&#xa;  reason_codes" vertex="1">
+          <mxGeometry height="180" width="220" x="768" y="344" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-18" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;align=left;spacingLeft=10;fontStyle=1" value="STAGE 4 · Safety  (CODE-authoritative)&#xa;app/stage4_safety.py&#xa;&#xa;• Phishing short-circuit (scans stage1+stage3)&#xa;• Loop-until-clean sanitizer:&#xa;    credential_request strip&#xa;    unauthorized_promise strip&#xa;    stranded-negation sweep&#xa;    third-party redirect strip&#xa;• Severity floors: phishing→critical, ≥50k→critical&#xa;• human_review precedence (code)&#xa;• Language enforcement (en/bn templates)&#xa;• Empty-after-sanitize → safe template" vertex="1">
+          <mxGeometry height="164" width="451" x="660" y="540" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-19" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;align=left;spacingLeft=10;fontStyle=1" value="TicketResponse  (Pydantic v2)&#xa;app/schema.py&#xa;&#xa;ticket_id · relevant_transaction_id&#xa;evidence_verdict · case_type · severity · department&#xa;agent_summary · recommended_next_action&#xa;customer_reply · human_review_required&#xa;confidence · reason_codes" vertex="1">
+          <mxGeometry height="120" width="240" x="716" y="732" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-20" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#d79b00;verticalAlign=top" value="" vertex="1">
+          <mxGeometry height="320" width="380" x="1311" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-21" parent="1" style="text;html=1;strokeColor=none;fillColor=#fff2cc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=12;fontStyle=1" value="LLM Provider  (out-of-process)" vertex="1">
+          <mxGeometry height="35" width="340" x="1331" y="145" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-22" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;spacingLeft=10" value="OpenRouter&#xa;https://openrouter.ai/api/v1&#xa;&#xa;app/llm/openrouter.py&#xa;OpenAI SDK · json_object mode&#xa;temperature=0.1 · timeout=10s&#xa;tenacity retry 2x exp backoff" vertex="1">
+          <mxGeometry height="110" width="340" x="1328" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-23" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10" value="google/gemini-2.5-flash-lite&#xa;(configurable via OPENROUTER_MODEL)" vertex="1">
+          <mxGeometry height="50" width="340" x="1331" y="315" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-24" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=2" value="env: OPENROUTER_API_KEY, OPENROUTER_BASE_URL,&#xa;OPENROUTER_MODEL  (read from normalizer/.env)" vertex="1">
+          <mxGeometry height="50" width="340" x="1331" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-25" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10" value="cortex-db  (PostgreSQL 16)&#xa;internal-only · no host port&#xa;holds backend sessions/tickets" vertex="1">
+          <mxGeometry height="100" width="180" x="160" y="720" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-26" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;verticalAlign=top" value="" vertex="1">
+          <mxGeometry height="300" width="380" x="1311" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-27" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1" value="Legend" vertex="1">
+          <mxGeometry height="25" width="380" x="1200" y="488" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-28" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10" value="LLM-driven stage" vertex="1">
+          <mxGeometry height="30" width="160" x="1331" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-29" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontStyle=1" value="Code-authoritative stage" vertex="1">
+          <mxGeometry height="30" width="180" x="1511" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-30" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10" value="HTTP / HTTPS" vertex="1">
+          <mxGeometry height="25" width="160" x="972" y="575" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-31" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontStyle=2" value="internal compose DNS&#xa;(service:port)" vertex="1">
+          <mxGeometry height="40" width="160" x="972" y="648" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-32" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;strokeColor=#000000" value="">
+          <mxGeometry relative="1" as="geometry" />
+          <mxPoint x="1200" y="555" as="sourcePoint" />
+          <mxPoint x="1300" y="555" as="targetPoint" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-33" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;strokeColor=#666666;dashed=1" value="">
+          <mxGeometry relative="1" as="geometry" />
+          <mxPoint x="1200" y="585" as="sourcePoint" />
+          <mxPoint x="1300" y="585" as="targetPoint" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-34" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2" value="Scoring rubric (90 from normalizer):&#xa;· Evidence Reasoning 35&#xa;· Safety 20&#xa;· Schema 15&#xa;· Performance 10&#xa;· Response Quality 10" vertex="1">
+          <mxGeometry height="120" width="340" x="1331" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-35" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-2" style="endArrow=classic;html=1;rounded=0;strokeColor=#000000;dashed=1" target="65ae-xnnsJbkY8tIesYS-3" value="HTTPS (prod)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-37" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-3" style="endArrow=classic;html=1;rounded=0;strokeColor=#000000" target="65ae-xnnsJbkY8tIesYS-8" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-38" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-8" style="endArrow=classic;html=1;rounded=0;strokeColor=#9673a6;strokeWidth=3" target="65ae-xnnsJbkY8tIesYS-13" value="POST /analyze-ticket&#xa;http://normalizer:9000&#xa;JSON in / JSON out">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-39" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-13" style="endArrow=classic;html=1;rounded=0;strokeColor=#9673a6" target="65ae-xnnsJbkY8tIesYS-14" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-40" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-14" style="endArrow=classic;html=1;rounded=0;strokeColor=#6c8ebf" target="65ae-xnnsJbkY8tIesYS-15" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-41" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-15" style="endArrow=classic;html=1;rounded=0;strokeColor=#6c8ebf" target="65ae-xnnsJbkY8tIesYS-16" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-42" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-16" style="endArrow=classic;html=1;rounded=0;strokeColor=#6c8ebf" target="65ae-xnnsJbkY8tIesYS-17" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-43" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-17" style="endArrow=classic;html=1;rounded=0;strokeColor=#b85450;strokeWidth=2" target="65ae-xnnsJbkY8tIesYS-18" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-44" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-18" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2" target="65ae-xnnsJbkY8tIesYS-19" value="200 OK">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-45" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-19" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2" target="65ae-xnnsJbkY8tIesYS-8" value="TicketResponse JSON">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="500" y="775" />
+              <mxPoint x="380" y="535" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-46" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-8" style="endArrow=classic;html=1;rounded=0;strokeColor=#666666;dashed=1" target="65ae-xnnsJbkY8tIesYS-25" value="DATABASE_URL">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-47" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-15" style="endArrow=classic;html=1;rounded=0;strokeColor=#d79b00;dashed=1" target="65ae-xnnsJbkY8tIesYS-22" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-48" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-16" style="endArrow=classic;html=1;rounded=0;strokeColor=#d79b00;dashed=1" target="65ae-xnnsJbkY8tIesYS-22" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-49" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-17" style="endArrow=classic;html=1;rounded=0;strokeColor=#d79b00;dashed=1" target="65ae-xnnsJbkY8tIesYS-22" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-50" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-22" style="endArrow=classic;html=1;rounded=0;strokeColor=#d6b656" target="65ae-xnnsJbkY8tIesYS-23" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-51" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=2" value="Branch: feature/normalizer-v1  ·  HEAD: 97181a5  ·  Stack: docker compose -f docker-compose.yml up -d  ·  Swagger: http://127.0.0.1:38181/docs/" vertex="1">
+          <mxGeometry height="30" width="1500" x="118" y="878" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-5" parent="1" style="text;html=1;strokeColor=none;fillColor=#d5e8d4;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=12;fontStyle=1" value="cortex-backend  (Django + DRF + gunicorn)&#xa;127.0.0.1:38181 → :8000" vertex="1">
+          <mxGeometry height="40" width="240" x="80" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10" value="GET /health" vertex="1">
+          <mxGeometry height="30" width="240" x="80" y="415" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10" value="GET /docs/  (Swagger UI)" vertex="1">
+          <mxGeometry height="30" width="240" x="80" y="455" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;dashed=1" value="nginx (prod only)&#xa;HTTPS termination&#xa;loopback-only listener" vertex="1">
+          <mxGeometry height="70" width="240" x="80" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="65ae-xnnsJbkY8tIesYS-52" edge="1" parent="1" source="65ae-xnnsJbkY8tIesYS-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" target="65ae-xnnsJbkY8tIesYS-27">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
