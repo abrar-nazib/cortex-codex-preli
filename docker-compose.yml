@@ -1,0 +1,91 @@
+# Root compose for the cortex-codex-mock-preli mock preliminary.
+#
+# Two services (frontend removed):
+#   - backend    : Django + DRF on :8000 (built from ./backend)
+#   - normalizer : teammate-owned FastAPI classifier (built from ./normalizer)
+#   - db         : PostgreSQL (only for the backend; not published)
+#
+# Blast surface: ONLY the backend is reachable from the host, and it binds
+# 127.0.0.1:38181 so only nginx (on the same box) can reach it. normalizer and
+# db publish no host ports — they are reachable only on the compose network
+# via service DNS (`normalizer`, `db`).
+#
+# Override env via a .env file at the repo root or `docker compose --env-file`.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cortex-db
+    restart: unless-stopped
+    # No `ports:` — internal to the compose network only.
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cortex}
+      POSTGRES_USER: ${POSTGRES_USER:-cortex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cortex_pw}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cortex} -d ${POSTGRES_DB:-cortex}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./backend
+    container_name: cortex-backend
+    restart: unless-stopped
+    # Loopback-only: only nginx on this host can reach the API. Not exposed
+    # on the public interface.
+    ports:
+      - "127.0.0.1:38181:8000"
+    # collectstatic writes to /app/staticfiles in the container; this bind
+    # mount surfaces them on the host at ./backend/staticfiles so nginx can
+    # serve /static/ directly without going through gunicorn.
+    volumes:
+      - ./backend/staticfiles:/app/staticfiles
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-insecure-change-me}
+      DJANGO_DEBUG: "false"
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-hackathonapi.cortextechnologies.net,localhost,127.0.0.1}
+      # drf_spectacular /docs/ + /api/schema/. Off in prod (see docker-compose.prod.yml).
+      DJANGO_ENABLE_DOCS: "true"
+      DATABASE_URL: postgres://${POSTGRES_USER:-cortex}:${POSTGRES_PASSWORD:-cortex_pw}@db:5432/${POSTGRES_DB:-cortex}
+      NORMALIZER_URL: http://normalizer:9000
+      NORMALIZER_TIMEOUT_S: "20"
+      NORMALIZER_MAX_RETRIES: "2"
+      NORMALIZER_RETRY_BACKOFF_S: "0.5"
+      SAFETY_FAIL_LOUD: "true"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      db:
+        condition: service_healthy
+      normalizer:
+        condition: service_healthy
+    healthcheck:
+      # /health is the in-process probe; doesn't touch the normalizer.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  normalizer:
+    build:
+      context: ./normalizer
+    container_name: cortex-normalizer
+    restart: unless-stopped
+    # No `ports:` — internal to the compose network only. The backend reaches
+    # it at http://normalizer:9000.
+    env_file:
+      - ./normalizer/.env
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  db-data:

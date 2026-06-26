@@ -1,0 +1,20 @@
+# Production overlay for the cortex-codex mock preliminary.
+#
+# Used by the CD pipeline:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Inherits everything from docker-compose.yml (db + backend + normalizer,
+# loopback-only backend port, no published normalizer/db ports) and only
+# tightens the prod-only environment on the backend. Keys not listed here
+# are merged in from the base file unchanged.
+
+services:
+  backend:
+    environment:
+      # No debug surfaces in prod.
+      DJANGO_DEBUG: "false"
+      # /docs/ (swagger UI) + /api/schema/ (OpenAPI) stay up for now during the
+      # mock preliminary. To remove the docs surface in production, flip this
+      # to "false" — one line, redeployed on the next push to main, and both
+      # /docs/ and /api/schema/ start returning 404.
+      DJANGO_ENABLE_DOCS: "true"

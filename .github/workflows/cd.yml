@@ -1,0 +1,78 @@
+# Deploy to VPS on every push to main.
+#
+# Plain shell on a self-hosted runner's ssh-agent. No third-party action:
+# webfactory/ssh-agent still pins Node 20 and trips the deprecation warning.
+# Workflow does exactly what was asked:
+#   1. SSH to vps
+#   2. cd /home/ubuntu/cortex-codex-mock-preli
+#   3. git pull --ff-only (refuse non-FF to avoid the "two histories" mess)
+#   4. docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#      (db + backend + normalizer; frontend removed. The prod overlay turns
+#      off debug + (eventually) the docs surface. Migrations run inside the
+#      backend container's CMD, so the deploy stays a one-liner.)
+
+name: CD to VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Load SSH key into agent
+        # SSH_SECRET_KEY is a repo secret. It must be the *private* key whose
+        # public half is in the VPS's ~/.ssh/authorized_keys for the `ubuntu`
+        # user. Newlines in the secret must survive — base64-decode if needed.
+        env:
+          SSH_SECRET_KEY: ${{ secrets.SSH_SECRET_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          printf '%s\n' "$SSH_SECRET_KEY" | tr -d '\r' | ssh-add -
+
+      - name: Trust VPS host key
+        # Same TOFU-dedupe pattern as the reference workflow: -T 10 gives a
+        # hard cap on a slow lookup, sort -u keeps known_hosts single-line.
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          touch ~/.ssh/known_hosts
+          ssh-keyscan -T 10 -H 76.13.214.32 2>/dev/null \
+            | grep -v '^#' \
+            | sort -u \
+            >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Pull, build, and restart on VPS
+        # ServerAliveInterval/CountMax keep the channel warm through the
+        # long `pull` + `build` so a quiet VPS doesn't kill the session
+        # mid-deploy and leave the stack half-restarted.
+        run: |
+          ssh -o ServerAliveInterval=20 -o ServerAliveCountMax=6 \
+            ubuntu@76.13.214.32 <<'DEPLOY'
+            set -e
+            cd /home/ubuntu/cortex-codex-mock-preli
+            echo "=== git pull --ff-only ==="
+            git pull --ff-only
+            echo "=== docker compose -f ... up -d --build ==="
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+          DEPLOY
