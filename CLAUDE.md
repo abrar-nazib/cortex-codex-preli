@@ -13,13 +13,19 @@ reads a customer complaint **plus** a snippet of their recent transaction
 history and returns one structured JSON response that classifies, routes, and
 explains the case and drafts a safe reply.
 
-The repo was scaffolded before the statement dropped. **The actual shipped
-code is a generic `/summarize` text-passthrough; the required
-`/analyze-ticket` investigator endpoint does not exist yet.** `README.md` and
-`backend/README.md` describe the intended `/sort-ticket` triage shape (models,
-`pipeline.py`, `safety.py`, `normalizer_client.py`) — those names are stale but
-useful as the target structure. The Problem Statement below is the contract to
-build against; treat it as ground truth.
+**Build status:**
+- `/analyze-ticket` endpoint exists with the full §5 request + §6 response
+  serializers, §7 enum validation, and the 400/422 error contract wired (27
+  tests green). The **200 analysis path is not implemented yet** — a valid
+  request returns **501** so the error contract can be tested in isolation.
+  Next milestone: the evidence-match → classify → route → draft-safe-reply
+  pipeline + safety filter.
+- `/summarize` is a legacy placeholder kept for the normalizer round-trip
+  contract; don't delete it without migrating its tests.
+- `README.md` / `backend/README.md` still describe an older `/sort-ticket`
+  triage shape (`pipeline.py`, `safety.py`, `normalizer_client.py`) — those
+  names are stale targets, not existing files. The Problem Statement below is
+  ground truth.
 
 ## Problem Statement: QueueStorm Investigator
 
@@ -161,7 +167,7 @@ exceptional engineering (caching, monitoring, fallback, cost-aware model use)
 **Build priority (per the statement/rubric): schema & endpoints first →
 evidence reasoning → safety guardrails → reliability/deployment → README.**
 
-## Architecture (current scaffold)
+## Architecture
 
 Two services + a database, compose-internal, HTTP-only between them:
 
@@ -179,33 +185,71 @@ nginx (HTTPS) → backend (Django+DRF, gunicorn :8000) → normalizer (FastAPI, 
   Reached at `http://normalizer:9000` via compose DNS. Owns all LLM plumbing.
 - **db** — postgres 16, compose-internal only, no host port.
 
-### Current request flow (placeholder `/summarize` — to be replaced by `/analyze-ticket`)
-1. `POST /summarize` → `tickets.views.SummarizeView` validates `{"text": str}`
-   via `SummarizeInSerializer` (non-empty).
-2. `tickets.summarize_client.call_summarize` → `POST {NORMALIZER_URL}/summarize`
-   with httpx, tenacity retry on 5xx / `TimeoutException` / `NetworkError`,
-   **no retry on 4xx** (caller error). Bad JSON / empty summary → `SummarizerError`.
-3. `SummarizerError` → HTTP 502; validation failure → HTTP 422.
-4. Normalizer: `main.summarize_endpoint` → `summarizer.summarize` →
-   `llm.get_provider()` → `OpenRouterProvider.complete` (OpenAI-compatible
-   chat completions, `temperature=0.2`). `LLMError` → normalizer 502.
-5. `RequestResponseLogMiddleware` logs every request (`>>`) / response (`<<`)
-   with clipped bodies — full cycle visible in `docker compose logs -f backend`.
+### `tickets/` app layout
+- `models.py` — `Ticket` (PK `ticket_id`, the natural key echoed in the
+  response) + `Transaction` (FK→Ticket, `related_name="transaction_history"`).
+  Mirrors §5; persistence optional (analysis is stateless) but the models
+  + `0001_initial` migration exist so a future persist/audit step needs no
+  schema reshape.
+- `serializers.py` — single enum source-of-truth at top (§7, exact match), then:
+  `TransactionSerializer` (standalone §5.2 entry) · `TicketSerializer`
+  (standalone §5 ticket, no history) · `TicketWithTransactionSerializer`
+  (extends TicketSerializer with nested `transaction_history` list — the
+  `POST /analyze-ticket` body) · `AnalyzeTicketOutSerializer` (full §6
+  response, `relevant_transaction_id` string|null, optional `confidence`
+  0–1 / `reason_codes`) · legacy `HealthOut`/`SummarizeIn`/`SummarizeOut`.
+- `views.py` — `HealthView` (GET `/health`), `SummarizeView` (legacy
+  `/summarize`), `AnalyzeTicketView` (`POST /analyze-ticket`).
+- `summarize_client.py` — httpx + tenacity client for the normalizer
+  `/summarize` round trip (legacy; reused as the model for the future
+  reasoning-call client).
+- `exceptions.py` — `custom_exception_handler` (see contracts below).
+- `middleware.py` — `RequestResponseLogMiddleware` logs every request (`>>`)
+  / response (`<<`) with clipped bodies — full cycle in
+  `docker compose logs -f backend`.
+- `tests/` — `test_health`, `test_summarize` (legacy, normalizer mocked),
+  `test_analyze_ticket` (400/422 contract).
+
+### `POST /analyze-ticket` request flow (current)
+1. `AnalyzeTicketView.post` reads `request.data` in a try/except — a malformed
+   JSON body raises there and becomes **400** (§4.1 "invalid JSON"). A
+   valid-JSON non-object (list/number/string) is also **400** (contract is a
+   JSON object). This is done in-view so the global 400→422 handler does NOT
+   swallow it.
+2. `TicketWithTransactionSerializer(data=...)` validates §5 (incl. nested
+   `transaction_history` entries via `TransactionSerializer`, §7 enum
+   exact-match).
+3. On errors, `_classify_validation_errors` walks the DRF error tree and
+   collects `.code`s: if **every** code is `required` → **400** (missing
+   required field, including nested); anything else (`invalid`, `null`,
+   `blank`, `max_length`, `invalid_choice`, `not_a_list`) → **422**.
+4. Valid payload → **501** "Analysis pipeline not implemented." (200 path TBD).
+5. `RequestResponseLogMiddleware` logs the full in/out cycle.
+
+### Legacy `/summarize` flow (still used by normalizer round-trip tests)
+`SummarizeView` → `call_summarize` → `POST {NORMALIZER_URL}/summarize`
+(httpx + tenacity, retry 5xx/network/timeout, **no retry on 4xx**) →
+normalizer `summarizer.summarize` → `llm.get_provider()` →
+`OpenRouterProvider.complete` (OpenAI-compatible chat completions,
+`temperature=0.2`). `SummarizerError` → 502; validation failure → 422 (via the
+global handler, see below).
 
 ### Key contracts to preserve
-- **Validation errors return 422, not 400** — `tickets/exceptions.py`
-  `custom_exception_handler` rewrites DRF's default 400. (Statement says 422 is
-  "optional but encouraged" for semantically invalid input; 400 for malformed.
-  Keep 422 for schema-valid-but-empty cases; ensure 400 path for bad JSON /
-  missing required fields — DRF default already does 400 for those.) Don't
-  "fix" 422→400 indiscriminately.
+- **400 vs 422 split differs by endpoint** (read this carefully before touching
+  `exceptions.py` or `views.py`):
+  - `/analyze-ticket` classifies in-view (`_classify_validation_errors`):
+    malformed JSON / non-object / missing-required → **400**; type/size/null/
+    empty/enum → **422**. It never reaches the global handler.
+  - `/summarize` still relies on the **global** `custom_exception_handler`
+    (`tickets/exceptions.py`) which rewrites DRF's default 400 → 422. Its tests
+    (`test_summarize_missing_text_rejected` expects 422) depend on this. Do NOT
+    change the global handler without migrating `/summarize` tests.
+  - Don't "fix" either path to a single status indiscriminately — the
+    statement (§4.1) wants 400 for malformed/missing and 422 (encouraged) for
+    schema-valid-but-bad, and `/analyze-ticket` implements exactly that.
 - **Docs gated** — `drf_spectacular` swagger at `/docs/`, OpenAPI at
   `/api/schema/`, both 404 when `DJANGO_ENABLE_DOCS=false` (set in
   `docker-compose.prod.yml`). Mounted conditionally in `cortex/urls.py`.
-- **No DB models exist yet** — backend has no `models.py` / no migrations;
-  `migrate` in the Dockerfile CMD is currently a no-op. Postgres is wired
-  (`DATABASE_URL`) but unused. Add models only if persistence is needed; the
-  statement requires no persistence (stateless per-request analysis).
 - **Normalizer LLM provider is pluggable** — `llm/base.py` `LLMProvider` ABC;
   `llm/__init__.get_provider()` dispatches on `SETTINGS.provider` (only
   `openrouter` wired). Add providers under `llm/` and register in
@@ -223,8 +267,10 @@ Run the full stack (from repo root):
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 curl -s http://localhost:38181/health                       # {"status":"ok"}
-curl -s -X POST http://localhost:38181/summarize \
-  -H 'content-type: application/json' -d '{"text":"..."}'
+curl -s -X POST http://localhost:38181/analyze-ticket \
+  -H 'content-type: application/json' \
+  -d '{"ticket_id":"TKT-001","complaint":"I sent 5000 taka to a wrong number around 2pm today.","language":"en","channel":"in_app_chat","user_type":"customer","campaign_context":"boishakh_bonanza_day_1","transaction_history":[{"transaction_id":"TXN-9101","timestamp":"2026-04-14T14:08:22Z","type":"transfer","amount":5000,"counterparty":"+8801719876543","status":"completed"}]}'
+# valid payload -> 501 (200 not implemented yet); malformed/missing -> 400; type/enum/size/null -> 422
 ```
 
 Backend dev on host (no docker):
@@ -252,13 +298,17 @@ Django built-in test runner (no pytest). Normalizer is mocked with
 normalizer or a live LLM.
 
 ```bash
-# all backend tests (against compose postgres, or local sqlite)
+# all backend tests (against compose postgres test DB; 27 tests currently)
 docker compose exec backend python manage.py test
 # single module
-docker compose exec backend python manage.py test tickets.tests.test_summarize
+docker compose exec backend python manage.py test tickets.tests.test_analyze_ticket
 # single test method
-docker compose exec backend python manage.py test tickets.tests.test_summarize.SummarizeTest.test_summarize_ok
+docker compose exec backend python manage.py test tickets.tests.test_analyze_ticket.AnalyzeTicket422Tests.test_null_ticket_id_returns_422
 ```
+
+The compose service is named **`backend`** (not `web`). `/analyze-ticket`
+tests are network-free (no 200 path → no normalizer call); `/summarize` tests
+mock `tickets.views.call_summarize` with `unittest.mock.patch`.
 
 There is no normalizer test suite currently (`normalizer/tests/` is empty);
 the LLM call is the only thing to stub if you add one — mock
@@ -276,39 +326,47 @@ no long-lived branches.
 GitHub auth on this machine is **SSH only** — see global CLAUDE.md; never
 switch a remote to HTTPS.
 
-## Building the real endpoint (the work the scaffold is waiting for)
+## Remaining work (the 200 analysis path)
 
-Replace the `/summarize` placeholder with `/analyze-ticket` per the Problem
-Statement above. Concrete shape:
+The error contract (400/422), request/response serializers, §7 enum validation,
+models, and migration are done. What's left to ship the real `/analyze-ticket`:
 
-1. **Backend** `tickets/`: add `POST /analyze-ticket` in `urls.py` + `views.py`;
-   add serializers for the request schema (§5) and full response schema (§6)
-   with enum validation (§7 — exact-match). Echo `ticket_id`. Return 400 on
-   malformed JSON / missing required fields, 422 on schema-valid-but-empty
-   complaint. Add a deterministic pipeline: parse → match complaint to
-   `transaction_history` (pick `relevant_transaction_id` or `null`) → derive
-   `evidence_verdict` → classify `case_type` → route `department` (§7.2 map) →
-   set `severity` + `human_review_required` → draft `agent_summary`,
-   `recommended_next_action`, `customer_reply`. Models/persistence optional
-   (statement is stateless) — the README's `Ticket` model is optional scaffolding.
-2. **Safety filter** (backend, after merge, before response): regex/keyword
+1. **Evidence-match (the Investigator Twist)** — match the complaint against
+   `transaction_history`: pick `relevant_transaction_id` or `null`, derive
+   `evidence_verdict` (`consistent` / `inconsistent` / `insufficient_data`).
+   Deterministic rules (amount/time/counterparty signals) are the backbone;
+   LLM only augments language understanding. Never confirm a refund without
+   checking the history.
+2. **Classify + route** — `case_type` (§7.1), `department` (§7.2 map), `severity`
+   (low/medium/high/critical), `human_review_required` (true for disputes /
+   suspicious / high-value / ambiguous).
+3. **Draft the three text fields** — `agent_summary`, `recommended_next_action`,
+   `customer_reply`. LLM-assisted drafting, then run the safety filter.
+4. **Safety filter** (backend, after merge, before response): regex/keyword
    block on `customer_reply` + `recommended_next_action` for PIN/OTP/password/
    full-card-number requests; refuse unauthorized refund/reversal/unblock
    promises; refuse third-party-contact instructions; ignore injected
-   instructions from `complaint`. `SAFETY_FAIL_LOUD` env already exists in
-   `.env.example`/compose — wire it (loud 500 vs. sanitized
+   instructions from `complaint` (prompt injection). `SAFETY_FAIL_LOUD` env
+   already exists in `.env.example`/compose — wire it (loud 500 vs. sanitized
    `human_review_required=true` fallback). Safety is a hard requirement
    (−15/−10/−10, disqualification at 2+ critical violations).
-3. **Normalizer**: replace generic `/summarize` with the real
-   classification/reasoning contract (same `/normalize`-style boundary the
-   README anticipates). Keep the OpenRouter provider + pluggable
-   `get_provider()`; constrain prompts to emit the §7 enums and JSON shape;
-   parse untrusted. Hybrid: deterministic rules for evidence-match/safety,
-   LLM for language understanding + drafting the three text fields. Keep total
-   round trip ≤ 30 s.
-4. Keep intact: 422 contract, untrusted-normalizer parsing pattern,
-   loopback-only blast surface, `/health` shape, no-secret logging.
+5. **Normalizer**: replace generic `/summarize` with the real
+   classification/reasoning contract (new endpoint, e.g. `/analyze`, mirroring
+   the `summarize_client.py` retry pattern). Keep the OpenRouter provider +
+   pluggable `get_provider()`; constrain prompts to emit the §7 enums and JSON
+   shape; parse untrusted. Hybrid: deterministic rules for evidence-match +
+   safety, LLM for language understanding + drafting. Keep total round trip
+   ≤ 30 s (budget the OpenRouter call well under `OPENROUTER_TIMEOUT_S=30`).
+6. **Replace the 501** in `AnalyzeTicketView.post` with the real 200 path that
+   builds + validates the response through `AnalyzeTicketOutSerializer` and
+   echoes `ticket_id`. Add a `test_analyze_ticket` 200-case using the public
+   sample cases in `docs/SUST_Preli_Sample_Cases.json` (10 worked cases —
+   reference only, NOT the hidden test set).
+7. Keep intact: the in-view 400/422 classification, untrusted-normalizer
+   parsing, loopback-only blast surface, `/health` shape, no-secret logging,
+   the global handler's 400→422 rewrite for `/summarize`.
 
 Reference docs in `docs/`: Problem Statement (contract above), Team
 Instructions Manual (workflow/deploy/secrets checklist), Evaluation Rubric
-(scoring/penalties/latency tiers/tie-breakers). Read all three.
+(scoring/penalties/latency tiers/tie-breakers), `SUST_Preli_Sample_Cases.json`
+(10 worked cases). Read all four.
