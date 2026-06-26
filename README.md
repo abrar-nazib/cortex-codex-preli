@@ -7,49 +7,29 @@ Codex Community Hackathon**, AI/API Challenge · 4-Hour Online Preliminary.
 - Live API base URL: `https://hackathonapi.cortextechnologies.net`
 - Submission form: (see organizer Google Form)
 
-> **Status:** The official **Problem Statement has not been published yet.**
-> This repo is the scaffold we deploy against the moment it drops — service
-> skeleton, deploy pipeline, safety/escalation guardrail slots, and docs shape
-> are all in place; only the main-endpoint name, request/response schema, and
-> reasoning logic are TBD until the statement lands. Sections marked **TBD**
-> are filled in then.
-
-Reference docs in this repo (read these together, per the manual):
-- [`docs/SUST_Preli_Team_Instructions_Manual_Sanitized.pdf`](docs/SUST_Preli_Team_Instructions_Manual_Sanitized.pdf) — how to execute + submit
-- [`docs/SUST_Preli_Evaluation_Rubric_Sanitized.pdf`](docs/SUST_Preli_Evaluation_Rubric_Sanitized.pdf) — scoring categories + penalties
 
 ---
 
-## What we build (per manual §2)
+## What we build 
 
 A backend API service that:
 
 1. Answers `GET /health` with `{"status":"ok"}` (proves the service is up; must
    respond within 60s of start — rubric "health readiness").
-2. Accepts the required input JSON on `POST /<main-endpoint>` and returns the
+2. Accepts the required input JSON on `POST /analyze-ticket` and returns the
    required structured output JSON **exactly** as defined in the Problem
-   Statement (right field names, types, enum values, HTTP codes — rubric
-   "API Contract & Schema", 15 pts, automated).
-3. Reasons from the supplied evidence/context (not keyword matching) and
-   routes risky/uncertain cases to human review (rubric "Evidence Reasoning",
-   35 pts, and "Safety & Escalation", 20 pts — safety is a hard requirement,
-   unsafe replies lose points even if the rest looks correct).
-4. Ships a `README.md` explaining setup, run command, AI/model usage, safety
-   logic, and known limitations (rubric "Documentation", 5 pts, manual review).
+   Statement 
 
-A frontend/UI is **not required** and not judged (manual §2) — we ship none.
+
+
 
 ### Endpoints
 
 | Method | Path                | SLA        | Purpose                                  |
 |--------|---------------------|------------|------------------------------------------|
 | GET    | `/health`           | < 60 s start, fast | `{"status":"ok"}` health probe    |
-| POST   | `/<main-endpoint>` | < 30 s      | Analyze one request, return structured JSON |
+| POST   | `/analyze-ticket` | < 30 s      | Analyze one request, return structured JSON |
 
-> The main endpoint name is **TBD** — set to the exact name the Problem
-> Statement specifies (the manual's example uses `/analyze-ticket`, but the
-> statement is authoritative). Until then the backend exposes `/sort-ticket`
-> as a placeholder that exercises the full pipeline end-to-end.
 
 ---
 
@@ -96,7 +76,7 @@ The solution uses a clean, reproducible deployment strategy to a VPS (Ubuntu) vi
 
 #### How a request flows
 
-1. Caller hits `POST https://hackathonapi.cortextechnologies.net/<main-endpoint>`.
+1. Caller hits `POST https://hackathonapi.cortextechnologies.net/analyze-ticket`.
 2. `backend` validates the request, parses the schema, and extracts data.
 3. `backend` calls `POST http://normalizer:9000/analyze` with the full payload, retrying on 5xx/timeout; treats the response as **untrusted**.
 4. `backend` merges the result, applies the **safety filter** (never ask for PIN/OTP/password; never promise unauthorized actions), and escalates risky cases to human review.
@@ -171,16 +151,15 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 ---
 
-## AI / model usage (manual §9, rubric Documentation)
+## AI / model usage (manual 9, rubric Documentation)
 
 - **Approach:** hybrid rules + optional lightweight LLM (allowed; GPU not
   allowed). The task is designed to be solvable without paid APIs, so the
   deterministic path must score on its own; the LLM only augments language
   understanding / structured-reasoning support where it helps.
-- **Provider:** TBD once the Problem Statement defines what the normalizer
-  must actually produce. The skeleton's `normalizer/requirements.txt` drops LLM
+- **Provider:** Openrouter as the provider. The skeleton's `normalizer/requirements.txt` drops LLM
   deps until then; they get added back behind the same `/normalize` contract.
-- **No GPU, no multi-GB weights, no runtime training** (manual §8/§9).
+- **No GPU, no multi-GB weights, no runtime training** (manual 8/9).
 - **Keys:** any provider key is supplied via env vars only (`normalizer/.env`,
   gitignored) and, for judging, via the official private submission field —
   never committed to the repo.
