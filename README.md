@@ -55,60 +55,52 @@ A frontend/UI is **not required** and not judged (manual §2) — we ship none.
 
 ## Architecture
 
-Two services + a database, talking only over HTTP / the compose network.
-Each service lives in its own directory.
+The system is a robust **two-service orchestrated pipeline** designed to ingest customer complaints and transaction histories, cross-reference them for ground-truth evidence, classify the case, and draft a safe, policy-compliant response.
 
-```
-                public HTTPS
-                       │
-                       ▼
-                  ┌─────────┐
-                  │  nginx   │   HTTPS termination (Let's Encrypt)
-                  └────┬─────┘
-                       │ 127.0.0.1:38181  (loopback only)
-                       ▼
-              ┌────────────────┐         POST /normalize          ┌──────────────┐
-              │    backend     │ ──────────────────────────────▶ │  normalizer  │
-              │ Django + DRF  │ ◀────────────────────────────── │  FastAPI     │
-              │  + Postgres   │       structured JSON            │  (skeleton)  │
-              └───────┬────────┘                                  └──────────────┘
-                      │
-                      ▼
-                ┌──────────┐
-                │ postgres │   compose-internal only (no host port)
-                └──────────┘
-```
+### 1. 🌐 Overall Architecture
+
+The system is split into a robust **Django/DRF Backend** that handles external API traffic, safety guardrails, and deterministic rules, and a **FastAPI Normalizer** that acts as the intelligence engine interfacing with LLMs.
+
+![Overall Architecture](docs/images/architecture-Overall%20Architecture(1).png)
 
 | Service     | Directory     | Public URL (HTTPS)                     | Internal port     | Host port       |
 |--------------|---------------|----------------------------------------|-------------------|-----------------|
 | `backend`   | `backend/`    | `https://hackathonapi.cortextechnologies.net` | `8000` (gunicorn) | `127.0.0.1:38181` |
 | `normalizer`| `normalizer/` | _internal only — not exposed publicly_       | `9000` (uvicorn)  | _none_          |
-| `db`        | postgres image | _internal only — not exposed publicly_      | `5432`            | _none_          |
 
-### Blast surface (intentionally small)
+### 2. 🧩 Individual Service Architecture
+
+#### A. Backend Service (Django / DRF)
+The backend acts as the authoritative gatekeeper. It strictly enforces the API contract, orchestrates the analysis pipeline, overrides LLM hallucination deterministically, and applies safety rails.
+
+![Backend Service](docs/images/architecture-Backend%20Service.png)
+
+#### B. Normalizer Service (FastAPI)
+The normalizer is the reasoning engine. It executes a 3-stage intelligence pipeline, keeping LLM interactions constrained and isolated.
+
+![Normalizer Service](docs/images/architecture-Normalizer%20Service.png)
+
+### 3. 🚀 Deployment Architecture
+
+The solution uses a clean, reproducible deployment strategy to a VPS (Ubuntu) via GitHub Actions (CI/CD). It emphasizes security by not exposing internal services (Normalizer) to the host or internet.
+
+![Deployment Architecture](docs/images/architecture-Deployment%20Architecture.png)
+
+#### Blast surface (intentionally small)
 
 - **Only the backend is reachable from the internet**, through one nginx vhost.
-- Backend host port binds **`127.0.0.1:38181`** (loopback) — only nginx on the
-  VPS reaches it; not exposed on the public interface.
-- **normalizer and postgres publish no host ports** — compose DNS only.
+- Backend host port binds **`127.0.0.1:38181`** (loopback) — only nginx on the VPS reaches it; not exposed on the public interface.
+- **normalizer publishes no host ports** — compose DNS only.
 - No Django admin, no auth/session/CSRF middleware — stateless JSON API.
 - No CORS headers — any client may call the API.
 
-### How a request flows
+#### How a request flows
 
 1. Caller hits `POST https://hackathonapi.cortextechnologies.net/<main-endpoint>`.
-2. `backend` validates the request, persists the raw record by its id.
-3. `backend` calls `POST http://normalizer:9000/normalize` with the full
-   payload, retrying on 5xx/timeout; treats the response as **untrusted**
-   (JSON parse + enum coerce + conservative-default fallback).
-4. `backend` merges the result, applies the **safety filter** (never ask for
-   PIN/OTP/password/full card number; never promise unauthorized/irreversible
-   actions), and escalates risky/uncertain cases to human review.
-5. The merged record is persisted to Postgres and returned to the caller.
-
-The normalizer is currently a **generic skeleton** (`/health` + `/normalize`
-placeholder). The real reasoning/classification module wires in there once the
-Problem Statement locks the contract.
+2. `backend` validates the request, parses the schema, and extracts data.
+3. `backend` calls `POST http://normalizer:9000/analyze` with the full payload, retrying on 5xx/timeout; treats the response as **untrusted**.
+4. `backend` merges the result, applies the **safety filter** (never ask for PIN/OTP/password; never promise unauthorized actions), and escalates risky cases to human review.
+5. The merged safe record is returned to the caller.
 
 ---
 
