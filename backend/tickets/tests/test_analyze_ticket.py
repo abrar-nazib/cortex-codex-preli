@@ -1,15 +1,16 @@
-"""POST /analyze-ticket — 400/422 contract tests (Problem Statement §4.1).
+"""POST /analyze-ticket — 400/422/500 contract tests (Problem Statement §4.1).
 
-The 200 analysis path is not implemented yet (returns 501), so these tests pin
-down the error contract only:
+The 200 analysis path is now implemented (delegates to tickets.pipeline, which
+calls the normalizer). The 400/422 tests never reach the pipeline; the valid-
+payload + still-reachable tests mock the normalizer so they stay network-free
+and deterministic. The 200-path logic itself (enum coercion, safety rail,
+routing, fallback) is covered in test_pipeline.py.
 
   400  malformed JSON body, non-object body, or missing required field
        (ticket_id / complaint, including nested required fields).
   422  schema-valid JSON but a bad value: wrong type, too long, null where
        non-null, empty complaint, enum value outside §7 taxonomy, etc.
-
-The normalizer is never reached (no 200 path), so these are network-free and
-run against the compose postgres test DB.
+  500  internal error -> sanitized {"detail": "Internal server error."}.
 """
 from unittest.mock import patch
 
@@ -19,6 +20,26 @@ from rest_framework.test import APITestCase
 from tickets.views import AnalyzeTicketView
 
 ENDPOINT = "/analyze-ticket"
+
+# Canned normalizer reply used to keep the valid-payload / still-reachable
+# tests network-free (no real LLM call). Mirrors the AnalyzeResult shape.
+CANNED_NORMALIZER_RESULT = {
+    "clean_complaint": "I sent 5000 taka to a wrong number around 2pm today.",
+    "relevant_transaction_id": "TXN-9101",
+    "evidence_verdict": "consistent",
+    "case_type": "wrong_transfer",
+    "severity": "high",
+    "agent_summary": "Customer reports a wrong transfer of 5000 BDT via TXN-9101.",
+    "recommended_next_action": "Verify TXN-9101 and initiate the wrong-transfer dispute workflow.",
+    "customer_reply": "We have noted your concern about TXN-9101. Please do not share your PIN or OTP with anyone. Our dispute team will review the case.",
+    "reason_codes": ["wrong_transfer", "transaction_match"],
+    "confidence": 0.9,
+}
+
+
+def _mock_normalizer(result=CANNED_NORMALIZER_RESULT):
+    """Patch the normalizer client so no HTTP/LLM call happens."""
+    return patch("tickets.normalizer_client.analyze", return_value=result)
 
 # A minimal valid payload; only used as the base to corrupt for 422 cases and
 # to assert the valid case escapes the 400/422 branches (returns 501).
@@ -224,11 +245,15 @@ class AnalyzeTicket422Tests(APITestCase):
         r = self._post({"ticket_id": "TKT-001", "language": "english"})
         self.assertEqual(r.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
-    # ── valid payload escapes the error branches (200 not implemented -> 501)
+    # ── valid payload escapes the error branches (mocked normalizer -> 200)
     def test_valid_payload_not_400_or_422(self):
-        r = self._post(VALID_PAYLOAD)
-        self.assertNotIn(r.status_code, (status.HTTP_400_BAD_REQUEST,
-                                         status.HTTP_422_UNPROCESSABLE_ENTITY))
+        with _mock_normalizer():
+            r = self._post(VALID_PAYLOAD)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        body = r.json()
+        self.assertEqual(body["ticket_id"], "TKT-001")
+        self.assertEqual(body["case_type"], "wrong_transfer")
+        self.assertEqual(body["department"], "dispute_resolution")
 
 
 class AnalyzeTicket500Tests(APITestCase):
@@ -297,9 +322,11 @@ class AnalyzeTicket500Tests(APITestCase):
         # A 500 must not crash the process — the next request still works.
         with self._force_internal_error():
             self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
-        r = self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
-        # Back to the normal not-implemented 501 (no leaked 500, no crash).
-        self.assertEqual(r.status_code, status.HTTP_501_NOT_IMPLEMENTED)
+        with _mock_normalizer():
+            r = self.client.post(ENDPOINT, VALID_PAYLOAD, format="json")
+        # Process survived: a clean JSON 200 (no leaked 500, no crash).
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("application/json", r["content-type"])
 
     def test_internal_error_log_has_no_secret_or_traceback(self):
         # Rubric "Secret handling": no stack traces / tokens / secrets in logs
