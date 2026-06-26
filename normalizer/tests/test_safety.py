@@ -417,3 +417,47 @@ def test_run_handles_invalid_enum_gracefully():
         "merchant_operations", "agent_operations", "fraud_risk",
     }
     assert out.evidence_verdict in {"consistent", "inconsistent", "insufficient_data"}
+
+# ─── Negation + unauthorized promise regression ──────────────────────────
+# Bug: "is not guaranteed" → after stripping "guaranteed" left stranded
+# "is not Any eligible amount...". Fix: also drop the negation.
+# Only test phrases that actually match UNAUTHORIZED_PROMISE_PHRASES so the
+# test exercises the negation-strip path, not the no-match path.
+@pytest.mark.parametrize(
+    "src,should_not_contain",
+    [
+        # "guaranteed" hit + "is not" → negation stripped
+        ("Recovery is not guaranteed for wrong transfers.",
+         ["is not any eligible"]),
+        # "guaranteed" hit + "is never" → negation stripped
+        ("Refund is never guaranteed for that case type.",
+         ["never any eligible"]),
+        # "guaranteed" hit standalone (no negation) → safe replacement inserted
+        ("Refund guaranteed within 24 hours.",
+         []),
+        # "we will refund" hit standalone → safe replacement inserted
+        ("We will refund you immediately.",
+         []),
+        # "your money will be returned" hit standalone
+        ("Your money will be returned next week.",
+         []),
+    ],
+)
+def test_pre_sanitize_strips_stranded_negation(src, should_not_contain):
+    cleaned, violations, _ = _pre_sanitize(src)
+    for bad in should_not_contain:
+        assert bad.lower() not in cleaned.lower(), (
+            f"stranded negation left in: {cleaned!r}"
+        )
+    # Sanity: at least one unauthorized_promise violation should be recorded.
+    assert any(v.startswith("unauthorized_promise:") for v in violations)
+    # And the safe replacement MUST appear.
+    assert config.SAFETY_REPLACEMENT_PROMISE.lower() in cleaned.lower()
+
+
+def test_pre_sanitize_negation_does_not_break_clean_text():
+    """A negation without a stripped promise phrase must be untouched."""
+    src = "We are not able to share internal investigation details."
+    cleaned, violations, _ = _pre_sanitize(src)
+    assert cleaned == src
+    assert not violations

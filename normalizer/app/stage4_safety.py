@@ -128,12 +128,26 @@ def _pre_sanitize(text: str) -> tuple[str, list[str], list[str]]:
             break  # restart scan
 
     # Unauthorized promises — loop until clean.
+    # When the matched phrase is preceded by a negation ("is not guaranteed",
+    # "is never refunded", "won't be able to refund"), drop the negation too
+    # so the replacement reads naturally instead of leaving "is not <safe phrase>".
+    _promise_negations = ("is not ", "is never ", "are not ", "aren't ",
+                          "will not ", "won't ", "cannot ", "can't ",
+                          "do not ", "doesn't ", "never ")
     changed = True
     while changed:
         changed = False
         hit = _scan_phrase(out, config.UNAUTHORIZED_PROMISE_PHRASES)
         if hit:
             out = _replace_phrase(out, hit, config.SAFETY_REPLACEMENT_PROMISE)
+            # Sweep for negation patterns now stranded immediately before the
+            # safe replacement (e.g. "is not Any eligible amount...").
+            for neg in _promise_negations:
+                pattern = re.compile(
+                    re.escape(neg) + re.escape(config.SAFETY_REPLACEMENT_PROMISE),
+                    re.IGNORECASE,
+                )
+                out = pattern.sub(config.SAFETY_REPLACEMENT_PROMISE, out)
             violations.append(f"unauthorized_promise:{hit}")
             overrides.append("replaced_unauthorized_promise")
             changed = True

@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+# Hackathon critical test pack — organizer-provided, never commit.
+smth.json
+# Local sample dumps during smoke-testing.
+sample*.json
+*.local.json
